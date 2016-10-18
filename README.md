@@ -17,8 +17,6 @@ the volume name in docker as a query language.
 At a high level, `_` is used to separate settings and `.` is used to separate
 key-values within settings i.e. `-v key.value_key2.value2:/volume`.
 
-Both characters can be escaped in field values by doubling them up.
-
 ### Query Fields
 Recognized query language fields are shown below.
 

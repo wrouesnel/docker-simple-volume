@@ -8,12 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"github.com/docker/go-plugins-helpers/volume"
+	"github.com/go-errors/errors"
 	"github.com/wrouesnel/docker-simple-disk/fsutil"
 	"github.com/wrouesnel/go.log"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"sync"
-	"github.com/go-errors/errors"
 )
 
 const (
@@ -23,7 +23,10 @@ const (
 var Version string = "dev"
 
 type SimpleVolumeDriver struct {
+	// Root directory to mount volumes at
 	volumeRoot string
+	// Device selection rules
+	deviceSelectionRules []DeviceSelectionRule
 	// Mutex to serialize volume operations
 	mtx sync.RWMutex
 }
@@ -93,15 +96,26 @@ func (this *SimpleVolumeDriver) Capabilities(req volume.Request) volume.Response
 	}
 }
 
-func NewSimpleVolumeDriver(volumeRoot string) *SimpleVolumeDriver {
+func NewSimpleVolumeDriver(volumeRoot string, deviceSelectionRules []DeviceSelectionRule) *SimpleVolumeDriver {
 	return &SimpleVolumeDriver{
-		volumeRoot: volumeRoot,
+		volumeRoot:           volumeRoot,
+		deviceSelectionRules: deviceSelectionRules,
 	}
 }
 
 func main() {
 	dockerPluginPath := kingpin.Flag("docker-plugins", "Listen path for the plugin.").Default(fmt.Sprintf("unix:///run/docker/plugins/%s.sock", PluginName)).URL()
 	volumeRoot := kingpin.Flag("volume-root", "Path where mounted volumes should be created").Default("/tmp/docker-simple").String()
+
+	// Various udev matching options and some sane defaults for most users
+	cmdlineSelectionRule := DeviceSelectionRule{}
+	kingpin.Flag("device-match-subsystem", "udev subsystem match for finding elegible devices").Default("block").StringsVar(&cmdlineSelectionRule.Subsystems)
+	kingpin.Flag("device-match-name", "udev name to match for finding elegible devices").Default("sd*").StringsVar(&cmdlineSelectionRule.Name)
+	kingpin.Flag("device-match-tag", "udev tag to match for finding elegible devices").StringsVar(&cmdlineSelectionRule.Tag)
+
+	kingpin.Flag("device-match-attr", "udev sys attribute to match for finding elegible devices").StringMapVar(&cmdlineSelectionRule.Attrs)
+	kingpin.Flag("device-match-properties", "udev property to match for finding elegible devices (i.e. environment variables)").Default("DEVTYPE=disk").StringMapVar(&cmdlineSelectionRule.Properties)
+
 	loglevel := kingpin.Flag("log-level", "Logging Level").Default("info").String()
 	logformat := kingpin.Flag("log-format", "If set use a syslog logger or JSON logging. Example: logger:syslog?appname=bob&local=7 or logger:stdout?json=true. Defaults to stderr.").Default("stderr").String()
 	kingpin.Parse()
@@ -118,7 +132,7 @@ func main() {
 	if !fsutil.PathExists(*volumeRoot) {
 		err := os.MkdirAll(*volumeRoot, os.FileMode(0777))
 		if err != nil {
-			log.Panicln("socket-root does not exist.")
+			log.Panicln("volume-root does not exist and could not be created.")
 		}
 	} else if !fsutil.PathIsDir(*volumeRoot) {
 		log.Panicln("volume-root exists but is not a directory.")
@@ -127,10 +141,11 @@ func main() {
 	log.Infoln("Volume mount root:", *volumeRoot)
 	log.Infoln("Docker Plugin Path:", *dockerPluginPath)
 
-	driver := NewSimpleVolumeDriver(*volumeRoot)
+	driver := NewSimpleVolumeDriver(*volumeRoot,
+		[]DeviceSelectionRule{cmdlineSelectionRule})
 	handler := volume.NewHandler(driver)
 
-	if err := handler.ServeUnix("root", PluginName) ; err != nil {
+	if err := handler.ServeUnix("root", PluginName); err != nil {
 		log.Errorln(err)
 	}
 }
