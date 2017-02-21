@@ -2,7 +2,7 @@
 	Test functions for the udev API querying
 */
 
-package main
+package volumequery
 
 import (
 	"testing"

@@ -1,9 +1,11 @@
-package main
+package volumequery
 
 import (
+	"github.com/wrouesnel/docker-simple-disk/volumelabel"
 	"github.com/jkeiser/iter"
 	"github.com/jochenvg/go-udev"
 	"sort"
+	"errors"
 )
 
 type NamingType string
@@ -16,28 +18,53 @@ const (
 // Specifies a volume query (this is a mash-up of query and create parameters
 // in reality.
 type VolumeQuery struct {
-	Label string
+	// Label of disk to search for
+	Label string	`volumelabel:"label"`
 
-	OwnHostname  bool
-	OwnMachineId string
+	// Hostname disk should be associated with
+	OwnHostname  bool	`volumelabel:"own-hostname"`
+	// MachineID the disk should be associated with
+	OwnMachineId string `volumelabel:"own-machine-id"`
 
-	Initialized      bool
-	Exclusive        bool
-	DynamicMounts    bool
-	PersistNumbering bool
+	// Should the disk have been initialized by the filesystem
+	Initialized      bool	`volumelabel:"initialized"`
+	// Should the disk be marked as exclusive use?
+	Exclusive        bool	`volumelabel:"exclusive"`
+	// Should the disk be placed in a subdirectory and dynamically updated
+	// as matching disks are added/removed
+	DynamicMounts    bool	`volumelabel:"dynamic-mounts"`
+	// Should disk numbering fields be respected from the label?
+	PersistNumbering bool	`volumelabel:"persist-numbering"`
 
-	Basename    string
-	NamingStyle NamingType
+	// Basename is the prefix assigned to mounted disks under the volume.
+	Basename    string		`volumelabel:"basename"`
+	// Naming style to use for disk mounts - numeric (incremented numbers)
+	// or uuid (what it sounds like).
+	NamingStyle NamingType	`volumelabel:"naming-style"`
 
-	MinimumSizeBytes uint64
-	MaximumSizeBytes uint64
+	// Minimum disk size to be considered valid.
+	MinimumSizeBytes uint64	`volumelabel:"min-size"`
+	// Maximum disk size to be considered valid.
+	MaximumSizeBytes uint64	`volumelabel:"max-size"`
 
-	MinDisks int
-	MaxDisks int
+	// Minimum number of disks which must match before returning
+	MinDisks int32	`volumelabel:"min-disks"`
+	// Maximum number of disks which can be returned by the match
+	MaxDisks int32	`volumelabel:"max-disks"`
 
-	Filesystem string
+	// Filesystem which will be created / or found
+	Filesystem string	`volumelabel:"filesytem"`
 
+	// Additional key-value metadata which must match.
 	Metadata map[string]string
+}
+
+func (this VolumeQuery) MarshalVolumeLabel() (string, error) {
+	return "", errors.New("Not implemented")
+}
+
+func (this *VolumeQuery) UnmarshalVolumeLabel(l string) error {
+	return errors.New("Not implemented")
 }
 
 // Struct representing labelled data (output as JSON)
