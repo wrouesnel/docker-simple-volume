@@ -2,8 +2,8 @@ package fsutil
 
 import (
 	"bytes"
-	. "github.com/wrouesnel/docker-simple-disk/logutil"
 	"github.com/kardianos/osext"
+	. "github.com/wrouesnel/docker-simple-disk/logutil"
 	"github.com/wrouesnel/go.log"
 	"io"
 	"os"

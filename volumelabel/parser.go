@@ -11,10 +11,10 @@ package volumelabel
 
 import (
 	"fmt"
-	"strings"
-	"regexp"
 	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -48,8 +48,18 @@ func init() {
 	}
 }
 
-// Checks if a given string is a valid volume label key or value
-func VolumeFieldValid(v string) bool {
+// Checks if a given string is a valid volume label key is valid
+// Keys may not blank.
+func VolumeFieldKeyValid(v string) bool {
+	return volumeFieldRegex.MatchString(v)
+}
+
+// Checks if a given string is a valid volume label key is valid
+// Values may be blank.
+func VolumeFieldValueValid(v string) bool {
+	if v == "" {
+		return true
+	}
 	return volumeFieldRegex.MatchString(v)
 }
 
@@ -66,7 +76,7 @@ func marshalType(v interface{}) (string, error) {
 		return fmt.Sprintf("%v", v), nil
 	case string:
 		s := v.(string)
-		if VolumeFieldValid(v.(string)) {
+		if VolumeFieldValueValid(v.(string)) {
 			return s, nil
 		}
 		return "", fmt.Errorf("value does not parse field regex: %v", s)
@@ -87,76 +97,76 @@ func unmarshalType(v string, t interface{}) error {
 	case *bool:
 		r, err := strconv.ParseBool(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*bool) = r
 	case *int:
-		r, err := strconv.ParseInt(v,10,0)
+		r, err := strconv.ParseInt(v, 10, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*int) = int(r)
 	case *int8:
-		r, err := strconv.ParseInt(v,10,8)
+		r, err := strconv.ParseInt(v, 10, 8)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*int8) = int8(r)
 	case *int16:
-		r, err := strconv.ParseInt(v,10,16)
+		r, err := strconv.ParseInt(v, 10, 16)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*int16) = int16(r)
 	case *int32:
-		r, err := strconv.ParseInt(v,10,32)
+		r, err := strconv.ParseInt(v, 10, 32)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*int32) = int32(r)
 	case *int64:
-		r, err := strconv.ParseInt(v,10,64)
+		r, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*int64) = int64(r)
 	case *uint:
-		r, err := strconv.ParseUint(v,10,0)
+		r, err := strconv.ParseUint(v, 10, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*uint) = uint(r)
 	case *uint8:
-		r, err := strconv.ParseUint(v,10,8)
+		r, err := strconv.ParseUint(v, 10, 8)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*uint8) = uint8(r)
 	case *uint16:
-		r, err := strconv.ParseUint(v,10,16)
+		r, err := strconv.ParseUint(v, 10, 16)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*uint16) = uint16(r)
 	case *uint32:
-		r, err := strconv.ParseUint(v,10,32)
+		r, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*uint32) = uint32(r)
 	case *uint64:
-		r, err := strconv.ParseUint(v,10,64)
+		r, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
 		}
 		*t.(*uint64) = uint64(r)
 	case *string:
-		if !VolumeFieldValid(v) {
+		if !VolumeFieldValueValid(v) {
 			return fmt.Errorf("value does not parse field regex: %v", v)
 		}
 		*t.(*string) = v
 	}
-	return fmt.Errorf("value is not a marshallable type: %T", v)
+	return nil
 }
 
 // MarshalVolumeLabel reads StructTag fields from a struct and turns them into
@@ -184,12 +194,12 @@ func MarshalVolumeLabel(v interface{}) (string, error) {
 			continue
 		}
 
-		if !VolumeFieldValid(keyName) {
+		if !VolumeFieldKeyValid(keyName) {
 			return "", fmt.Errorf("key name does not parse field regex: %v", keyName)
 		}
 
 		// Key name is valid. Get the value.
-		value, err := marshalType(vvalue.Field(i).Elem().Type())
+		value, err := marshalType(vvalue.Field(i).Interface())
 		if err != nil {
 			return "", err
 		}
@@ -221,32 +231,37 @@ func UnmarshalVolumeLabel(l string, v interface{}) error {
 
 	for _, kv := range keyValues {
 		kvTuple := strings.Split(kv, ParserKVSep)
-		if len(kvTuple) != 2 {
-			return fmt.Errorf("incomplete key-value tuple decoded found: %v", kv)
+		if len(kvTuple) == 2 {
+			rawValues[kvTuple[0]] = kvTuple[1]
+		} else {
+			rawValues[kvTuple[0]] = ""
 		}
-		rawValues[kvTuple[0]] = kvTuple[1]
 	}
 
 	// Scan the struct and try and unmarshal matching keys
 	for i := 0; i < value.Elem().NumField(); i++ {
-		keyName := value.Type().Field(i).Tag.Get(StructTag)
+		keyName := value.Type().Elem().Field(i).Tag.Get(StructTag)
 		// TODO: should we recognize "-" and just ignore it?
 		if keyName == "" {
 			continue
 		}
 		// Print something helpful if the struct could never unmarshal
-		if !VolumeFieldValid(keyName) {
+		if !VolumeFieldKeyValid(keyName) {
 			return fmt.Errorf("key name does not parse field regex: %v %v", keyName, value.Type().Field(i).PkgPath)
 		}
 
 		// Okay, do we have this keyname?
 		if rawstr, found := rawValues[keyName]; found {
 			// Yes. Let's try and unmarshal it as the type
-			target := &value.Elem().Field(i).Interface()
-
+			if !value.Elem().Field(i).CanAddr() {
+				return fmt.Errorf("key cannot be addressed and will never be unmarshalled: %v %v", keyName, value.Type().Field(i).PkgPath)
+			}
+			// Get a pointer to the field in the target struct
+			target := value.Elem().Field(i).Addr().Interface()
+			// Unmarshal straight into it
 			err := unmarshalType(rawstr, target)
 			if err != nil {
-				return err
+				return fmt.Errorf("Error while unmarshalling %v : %v : %v", keyName, rawstr, err)
 			}
 		}
 		// TODO: how to handle unspecified fields (i.e. meta- vals)?

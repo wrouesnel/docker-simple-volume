@@ -1,9 +1,9 @@
 package volumelabel
 
 import (
-	"testing"
 	. "gopkg.in/check.v1"
-	"github.com/wrouesnel/docker-simple-disk/volumequery"
+	"testing"
+	"math"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -13,39 +13,69 @@ type ParserSuite struct{}
 
 var _ = Suite(&ParserSuite{})
 
-// TestQuery holds a label to be parsed and a VolumeQuery which should be
-// returned
-type TestQuery struct {
-	Query string
-	Result volumequery.VolumeQuery
-	ShouldFail bool
-}
+func (this *ParserSuite) TestRoundTrip(c *C) {
+	// Test struct with all datatypes
+	type S struct {
+		Test1  int    `volumelabel:"test-int"`
+		Test2  int8   `volumelabel:"test-int8"`
+		Test3  int16  `volumelabel:"test-int16"`
+		Test4  int32  `volumelabel:"test-int32"`
+		Test5  int64  `volumelabel:"test-int64"`
+		Test6  uint   `volumelabel:"test-uint"`
+		Test7  uint8  `volumelabel:"test-uint8"`
+		Test8  uint16 `volumelabel:"test-uint16"`
+		Test9  uint32 `volumelabel:"test-uint32"`
+		Test10 uint64 `volumelabel:"test-uint64"`
+		Test11 string `volumelabel:"test-str"`
+		Test12 bool   `volumelabel:"test-bool"`
+	}
 
-var TestQueries []TestQuery = []{
-	// Blank
-	TestQuery{
-		Query: "",
-		Result: volumequery.VolumeQuery{},
-		ShouldFail: true,
-	},
-	// Simple label
-	TestQuery{
-		Query: "label.simplelabel",
-		Result: volumequery.VolumeQuery{
-			Label: "simplelabel",
-		},
-		ShouldFail: false,
-	},
-	// Fully loaded label.
-	TestQuery{
-		Query: "label.simplelabel_own-hostname.myhostname_own-machine-id_mymachineid_initialized.true_basename_mybasename",
-		Result: volumequery.VolumeQuery{
-			Label: "simplelabel",
-		},
-		ShouldFail: false,
-	},
-}
+	// Do a 0 roundtrip
+	var outbound string
+	var err error
+	var sout S
+	var sin S
 
-func (s *ParserSuite) TestVolumeQueries(c *C) {
+	sout = S{}
+	outbound, err = MarshalVolumeLabel(sout)
+	c.Check(err, IsNil)
 
+	c.Logf("Zeroed Value: %s", outbound)
+
+	sin = S{}
+	err = UnmarshalVolumeLabel(outbound, &sin)
+	c.Check(err, IsNil)
+
+	// Do structs match? (note: no DeepEquals because we only do "simple" structs)
+	c.Check(sout, Equals, sin)
+
+	// Test with maxed data types
+	sout = S{
+		Test1: int(^uint(0) >> 1),
+		Test2: math.MaxInt8,
+		Test3: math.MaxInt16,
+		Test4: math.MaxInt32,
+		Test5: math.MaxInt64,
+		Test6: ^uint(0),
+		Test7: math.MaxUint8,
+		Test8: math.MaxUint16,
+		Test9: math.MaxUint32,
+		Test10: math.MaxUint64,
+
+		Test11: "abcdefghijklmonpqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ---------",
+		Test12: true,
+	}
+
+	sout = S{}
+	outbound, err = MarshalVolumeLabel(sout)
+	c.Check(err, IsNil)
+
+	c.Logf("Maxed Value: %s", outbound)
+
+	sin = S{}
+	err = UnmarshalVolumeLabel(outbound, &sin)
+	c.Check(err, IsNil)
+
+	// Do structs match? (note: no DeepEquals because we only do "simple" structs)
+	c.Check(sout, Equals, sin)
 }

@@ -1,11 +1,11 @@
 package volumequery
 
 import (
-	"github.com/wrouesnel/docker-simple-disk/volumelabel"
+	"errors"
 	"github.com/jkeiser/iter"
 	"github.com/jochenvg/go-udev"
+	"github.com/wrouesnel/docker-simple-disk/volumelabel"
 	"sort"
-	"errors"
 )
 
 type NamingType string
@@ -19,41 +19,41 @@ const (
 // in reality.
 type VolumeQuery struct {
 	// Label of disk to search for
-	Label string	`volumelabel:"label"`
+	Label string `volumelabel:"label"`
 
 	// Hostname disk should be associated with
-	OwnHostname  bool	`volumelabel:"own-hostname"`
+	OwnHostname bool `volumelabel:"own-hostname"`
 	// MachineID the disk should be associated with
 	OwnMachineId string `volumelabel:"own-machine-id"`
 
 	// Should the disk have been initialized by the filesystem
-	Initialized      bool	`volumelabel:"initialized"`
+	Initialized bool `volumelabel:"initialized"`
 	// Should the disk be marked as exclusive use?
-	Exclusive        bool	`volumelabel:"exclusive"`
+	Exclusive bool `volumelabel:"exclusive"`
 	// Should the disk be placed in a subdirectory and dynamically updated
 	// as matching disks are added/removed
-	DynamicMounts    bool	`volumelabel:"dynamic-mounts"`
+	DynamicMounts bool `volumelabel:"dynamic-mounts"`
 	// Should disk numbering fields be respected from the label?
-	PersistNumbering bool	`volumelabel:"persist-numbering"`
+	PersistNumbering bool `volumelabel:"persist-numbering"`
 
 	// Basename is the prefix assigned to mounted disks under the volume.
-	Basename    string		`volumelabel:"basename"`
+	Basename string `volumelabel:"basename"`
 	// Naming style to use for disk mounts - numeric (incremented numbers)
 	// or uuid (what it sounds like).
-	NamingStyle NamingType	`volumelabel:"naming-style"`
+	NamingStyle NamingType `volumelabel:"naming-style"`
 
 	// Minimum disk size to be considered valid.
-	MinimumSizeBytes uint64	`volumelabel:"min-size"`
+	MinimumSizeBytes uint64 `volumelabel:"min-size"`
 	// Maximum disk size to be considered valid.
-	MaximumSizeBytes uint64	`volumelabel:"max-size"`
+	MaximumSizeBytes uint64 `volumelabel:"max-size"`
 
 	// Minimum number of disks which must match before returning
-	MinDisks int32	`volumelabel:"min-disks"`
+	MinDisks int32 `volumelabel:"min-disks"`
 	// Maximum number of disks which can be returned by the match
-	MaxDisks int32	`volumelabel:"max-disks"`
+	MaxDisks int32 `volumelabel:"max-disks"`
 
 	// Filesystem which will be created / or found
-	Filesystem string	`volumelabel:"filesytem"`
+	Filesystem string `volumelabel:"filesytem"`
 
 	// Additional key-value metadata which must match.
 	Metadata map[string]string
