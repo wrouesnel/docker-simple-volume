@@ -19,7 +19,7 @@ style:
 
 # Test everything
 test:
-	go test -v ./...
+	go test -coverprofile=coverage.out -v ./...
 	
 # Format the code
 fmt:
