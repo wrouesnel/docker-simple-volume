@@ -38,14 +38,11 @@ const StructTag = "volumelabel"
 //}
 
 var volumeFieldRegex *regexp.Regexp
+const volumeFieldRegexExpr = "^[a-zA-Z0-9][a-zA-Z0-9-]*$"
 
 func init() {
-	// Precompile the volume field regex
-	var err error
-	volumeFieldRegex, err = regexp.Compile("[a-zA-Z0-9][a-zA-Z0-9-]")
-	if err != nil {
-		panic(fmt.Sprintf("BUG! %v", err))
-	}
+	// Precompile the volume field regex (tests check correctness)
+	volumeFieldRegex, _ = regexp.Compile(volumeFieldRegexExpr)
 }
 
 // Checks if a given string is a valid volume label key is valid
@@ -76,7 +73,7 @@ func marshalType(v interface{}) (string, error) {
 		return fmt.Sprintf("%v", v), nil
 	case string:
 		s := v.(string)
-		if VolumeFieldValueValid(v.(string)) {
+		if VolumeFieldValueValid(s) {
 			return s, nil
 		}
 		return "", fmt.Errorf("value does not parse field regex: %v", s)
@@ -247,14 +244,14 @@ func UnmarshalVolumeLabel(l string, v interface{}) error {
 		}
 		// Print something helpful if the struct could never unmarshal
 		if !VolumeFieldKeyValid(keyName) {
-			return fmt.Errorf("key name does not parse field regex: %v %v", keyName, value.Type().Field(i).PkgPath)
+			return fmt.Errorf("key name does not parse field regex: %v %v", keyName, value.Type().Elem().Field(i).PkgPath)
 		}
 
 		// Okay, do we have this keyname?
 		if rawstr, found := rawValues[keyName]; found {
 			// Yes. Let's try and unmarshal it as the type
 			if !value.Elem().Field(i).CanAddr() {
-				return fmt.Errorf("key cannot be addressed and will never be unmarshalled: %v %v", keyName, value.Type().Field(i).PkgPath)
+				return fmt.Errorf("key cannot be addressed and will never be unmarshalled: %v %v", keyName, value.Type().Elem().Field(i).PkgPath)
 			}
 			// Get a pointer to the field in the target struct
 			target := value.Elem().Field(i).Addr().Interface()
