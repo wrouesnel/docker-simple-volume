@@ -71,8 +71,21 @@ Recognized query language fields are shown below.
 * `filesystem`
   Disk must have the given filesystem type.
   
-* `meta-`
-  Match on arbitrary keyvalues in the JSON metadata of the disk.
+* `encryption-passphrase`
+  If the disk is created, use this encryption passphrase. If the disk is matched
+  it must be encrypted and usable with this passphrase.
+  
+* `encryption-cipher`
+  If the disk is created, use this LUKS cipher string. Ignored on match (but
+  logs a warning if different).
+
+* `encryption-key-size`
+  If the disk is created, use this LUKS key size. Ignored on match (but
+  logs a warning if different).
+  
+* `encryption-hash`
+  If the disk is created, use this LUKS hash string. Ignored on match (but
+  logs a warning if different).
 
 ## Life Cycle
 When a docker container is launched with the volume driver, all local disks
@@ -96,4 +109,4 @@ you want to migrate your setup.
 # Future
 * Automatic provisioning - simple will eventually be able to match and
   change filesystem types (implemented by standard unix commands).
-* 
+ 

@@ -2,16 +2,16 @@
 GO_SRC := $(shell find -type f -name '*.go' ! -path '*/vendor/*')
 
 SRC_ROOT = github.com/wrouesnel/docker-simple-disk
-PROGNAME := docker-simple-disk
-VERSION ?= git:$(shell git describe --long --dirty)
+
+VERSION ?= $(shell git describe --long --dirty)
 TAG ?= latest
 CONTAINER_NAME ?= wrouesnel/$(PROGNAME):$(TAG)
 BUILD_CONTAINER ?= $(PROGNAME)_build
 
-all: vet test style $(PROGNAME)
+all: vet test style bin
 
 vet:
-	go vet .
+	go vet ./...
 
 # Check code conforms to go fmt
 style:
@@ -19,16 +19,21 @@ style:
 
 # Test everything
 test:
-	go test -coverprofile=coverage.out -v ./...
+	go test -covermode=count -coverprofile=coverage.out -v ./...
 	
 # Format the code
 fmt:
 	go fmt ./...
 
+bin: bin/docker-simple-disk bin/simple-test-query
+
 # Simple go build
-$(PROGNAME): $(GO_SRC)
-	GOOS=linux go build -a \
-	-ldflags "-extldflags '-static' -X main.Version=$(VERSION)" \
-	-o $(PROGNAME) .
-	
-.PHONY: vet test style
+bin/docker-simple-disk: $(GO_SRC)
+	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
+	-o bin/docker-simple-disk ./cmd/docker-simple-disk
+
+bin/simple-test-query: $(GO_SRC)
+	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
+	-o bin/simple-test-query ./cmd/simple-test-query
+
+.PHONY: vet test style bin

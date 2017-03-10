@@ -1,12 +1,16 @@
 package volumequery
 
 import (
-	"errors"
+	"sort"
 	"github.com/jkeiser/iter"
 	"github.com/jochenvg/go-udev"
-	"github.com/wrouesnel/docker-simple-disk/volumelabel"
-	"sort"
+	"encoding/json"
+	"bufio"
+	"os"
 )
+
+const SimpleMetadataLabel string = "simple-metadata"
+const SimpleMetadataUUID string = "903b0d2d-812e-4029-89fa-a905b9cd80c1"
 
 type NamingType string
 
@@ -52,19 +56,19 @@ type VolumeQuery struct {
 	// Maximum number of disks which can be returned by the match
 	MaxDisks int32 `volumelabel:"max-disks"`
 
-	// Filesystem which will be created / or found
-	Filesystem string `volumelabel:"filesytem"`
+	// Filesystem which will be created or found
+	Filesystem string `volumelabel:"filesystem"`
 
-	// Additional key-value metadata which must match.
-	Metadata map[string]string
-}
-
-func (this VolumeQuery) MarshalVolumeLabel() (string, error) {
-	return "", errors.New("Not implemented")
-}
-
-func (this *VolumeQuery) UnmarshalVolumeLabel(l string) error {
-	return errors.New("Not implemented")
+	// Encryption Key - if specified requires a volume be encrypted with the
+	// given key.
+	EncryptionKey string `volumelabel:"encryption-passphrase"`
+	// LUKS cipher to be used if creating a volume. If a passphrase is
+	// specified then uses the LUKS default.
+	EncryptionCipher string `volumelabel:"encryption-hash"`
+	// LUKS key size.
+	EncryptionKeySize int `volumelabel:"encryption-key-size"`
+	// LUKS hash function
+	EncryptionHash string `volumelabel:"encryption-hash"`
 }
 
 // Struct representing labelled data (output as JSON)
@@ -77,8 +81,42 @@ type VolumeLabel struct {
 	Label string `json:"label"`
 	// Last numbering assignment this disk had for the current label
 	Numbering string `json:"numbering"`
+	// Disk was created as an encrypted volume
+	Encrypted bool	`json:"encrypted"`
 	// Extra metadata
 	Metadata map[string]string `json:"metadata"`
+}
+
+// Serializes the label to it's null-terminated JSON form
+func SerializeVolumeLabel(label *VolumeLabel) ([]byte, error) {
+	serialized, err := json.Marshal(label)
+	if err != nil {
+		return []byte{}, err
+	}
+	serialized = append(serialized, byte(0))
+	return serialized, nil
+}
+
+// DeserializeVolumeLabel reads a given path for a null terminated VolumeLabel
+func DeserializeVolumeLabel(path string) (VolumeLabel, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return VolumeLabel{}, err
+	}
+
+	rdr := bufio.NewReader(f)
+	rawData, err := rdr.ReadBytes(byte(0))
+	if err != nil {
+		return VolumeLabel{}, err
+	}
+
+	volLabel := VolumeLabel{}
+
+	if err := json.Unmarshal(rawData, &volLabel); err != nil {
+		return VolumeLabel{}, err
+	}
+
+	return volLabel, nil
 }
 
 // Struct representing a disk which is able to be used by the plugin
@@ -93,6 +131,30 @@ type DeviceSelectionRule struct {
 	Tag        []string
 	Properties map[string]string
 	Attrs      map[string]string
+}
+
+func (this *DeviceSelectionRule) Copy() DeviceSelectionRule {
+	newRule := NewDeviceSelectionRule()
+
+	for k, v := range this.Properties {
+		newRule.Properties[k] = v
+	}
+
+	for k, v := range this.Attrs {
+		newRule.Attrs[k] = v
+	}
+
+	return newRule
+}
+
+func NewDeviceSelectionRule() DeviceSelectionRule {
+	return DeviceSelectionRule{
+		Subsystems : make([]string, 0),
+		Name : make([]string, 0),
+		Tag : make([]string, 0),
+		Properties: make(map[string]string),
+		Attrs : make(map[string]string),
+	}
 }
 
 // Takes a list of udev selection rules while will be applied individually and
@@ -172,18 +234,37 @@ func GetDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]string, error)
 	return ret, nil
 }
 
-// Takes a dispath and returns a list of partition devices available on the
+// Takes a disk path and returns a list of partition devices available on the
 // disk. This is eschewing manually reading GPT, which would be inefficient
 // since we already bind libudev.
 func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
-	udevCtx := udev.Udev{}
+	// This function uses targeted device selction rules
+	rules := []DeviceSelectionRule{
+		DeviceSelectionRule{
+			Properties: map[string]string{
+				"DEVTYPE": "partition",
+			},
+		},
+	}
 
-	devPaths := make(map[string]interface{})
-
-	deviceEnumerator := udevCtx.NewEnumerate()
-
-	// Only match initialized devices
-	if err := deviceEnumerator.AddMatchIsInitialized(); err != nil {
+	partitions, err := GetDevicesByDevNode(rules)
+	if err != nil {
 		return []string{}, err
 	}
+
+	// Do the actual query
+	return partitions, nil
 }
+
+// GetInitializedDisks returns all disks on the current node which are
+// initialized.
+//func GetInitializedDisks() []Disk {
+//
+//}
+
+// GetCandidateDisks returns all disks on the current node which *could* be used
+// Filters the list of possible disks on the basis of whether or not they are
+// presently mounted, which removed
+//func GetCandidateDisks() []string {
+//
+//}
