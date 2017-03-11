@@ -25,15 +25,15 @@ test:
 fmt:
 	go fmt ./...
 
-bin: bin/docker-simple-disk bin/simple-test-query
+bin: bin/docker-simple-disk bin/simplectl
 
 # Simple go build
 bin/docker-simple-disk: $(GO_SRC)
 	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
 	-o bin/docker-simple-disk ./cmd/docker-simple-disk
 
-bin/simple-test-query: $(GO_SRC)
+bin/simplectl: $(GO_SRC)
 	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
-	-o bin/simple-test-query ./cmd/simple-test-query
+	-o bin/simplectl ./cmd/simplectl
 
 .PHONY: vet test style bin

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"bufio"
 	"os"
+	"github.com/wrouesnel/docker-simple-disk/volumelabel"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const SimpleMetadataLabel string = "simple-metadata"
@@ -69,6 +71,27 @@ type VolumeQuery struct {
 	EncryptionKeySize int `volumelabel:"encryption-key-size"`
 	// LUKS hash function
 	EncryptionHash string `volumelabel:"encryption-hash"`
+}
+
+// VolumeQueryValue implements flag parsing for VolumeQuery's
+type VolumeQueryValue VolumeQuery
+
+func (this *VolumeQueryValue) Set(value string) error {
+	return volumelabel.UnmarshalVolumeLabel(value, this)
+}
+
+func (this *VolumeQueryValue) String() string {
+	output, err := volumelabel.MarshalVolumeLabel(this)
+	if err != nil {
+		return ""
+	}
+	return output
+}
+
+// VolumeQueryVar implements a var mapped for reading VolumeQuery's with
+// kingpin from the command line./
+func VolumeQueryVar(settings kingpin.Settings, target *VolumeQuery) {
+	settings.SetValue((*VolumeQueryValue)(target))
 }
 
 // Struct representing labelled data (output as JSON)
