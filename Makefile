@@ -27,6 +27,9 @@ fmt:
 
 bin: bin/docker-simple-disk bin/simplectl
 
+clean:
+	rm -f bin/docker-simple-disk bin/simplectl
+
 # Simple go build
 bin/docker-simple-disk: $(GO_SRC)
 	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
@@ -36,4 +39,4 @@ bin/simplectl: $(GO_SRC)
 	GOOS=linux go build -ldflags "-X main.Version=$(VERSION)" \
 	-o bin/simplectl ./cmd/simplectl
 
-.PHONY: vet test style bin
+.PHONY: vet test style bin clean

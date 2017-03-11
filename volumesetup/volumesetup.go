@@ -36,15 +36,12 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 
 	// Partition index we're aligning too
 	partIdx := 1
-	// Partition end we're aligning too in mebibytes (handles 4K disks properly)
-	partStartMebibyte := PartitionLabelInitialOffset
-	partEndMebibyte := partStartMebibyte + PartitionLabelSize
 
 	// Initial sgdisk partition label is *always* the metadata
 	partitionOpts := []string{
 		"-o",
 		"-n",
-		fmt.Sprintf("%d:%dM:%dM", partIdx, partStartMebibyte, partEndMebibyte),
+		fmt.Sprintf("%d:%dM:%dM", partIdx, PartitionLabelInitialOffset, PartitionLabelInitialOffset + PartitionLabelSize),
 		"-t",
 		fmt.Sprintf("%d:%s", partIdx, volumequery.SimpleMetadataUUID),
 		"-c",
@@ -54,18 +51,19 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 	// Parse the volume query into options which affect partitioning
 	// TODO: do we need to set type and do some magic to line it up?
 	partitionLabel := inputQuery.Label
-
 	partIdx++
-	partStartMebibyte = partEndMebibyte
-
 	partitionOpts = append(partitionOpts,
 		"-n",
-		fmt.Sprintf("%d:%dM:%dM", partIdx, partStartMebibyte, 0),
-		"-c",
-		fmt.Sprintf("%d:%s",partIdx, partitionLabel),
+		fmt.Sprintf("%d:0:0", partIdx),
 	)
 
+	if partitionLabel != "" {
+		partitionOpts = append(partitionOpts, "-c", fmt.Sprintf("%d:%s",partIdx, partitionLabel))
+	}
+	partitionOpts = append(partitionOpts, blockDevice)
+
 	log.Infoln("Partitioning device")
+	log.Debugln("Partitioning with commandline: sgdisk", strings.Join(partitionOpts, " "))
 	if err := executil.CheckExec("sgdisk", partitionOpts...); err != nil {
 		return errwrap.Wrap(errPartitioningFailed, err)
 	}
@@ -144,7 +142,8 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 
 		cryptOpts = append(cryptOpts, fsDevice, "-")
 
-		log.Debugln("Creating encrypted device")
+		log.Infoln("Creating encrypted device")
+		log.Debugln("Encrypting with command line: cryptsetup", strings.Join(cryptOpts, " "))
 		if err := executil.CheckExecWithInput(inputQuery.EncryptionKey,"cryptsetup", cryptOpts...); err != nil {
 			return errwrap.Wrap(errCryptSetupFailed, err)
 		}
@@ -157,13 +156,16 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 			mountDevice,
 		}
 
-		log.Debugln("Mounting encrypted device")
+		log.Infoln("Opening encrypted device for filesystem setup")
+		log.Debugln("Opening encrypted device with command line: cryptsetup", strings.Join(cryptOpenOpts, " "))
 		if err := executil.CheckExecWithInput(inputQuery.EncryptionKey, "cryptsetup", cryptOpenOpts...); err != nil {
 			return errwrap.Wrap(errCryptSetupFailed, err)
 		}
 
 		// Ensure the encrypted device will be unmounted when we finish here.
 		defer func() {
+			log.Infoln("Closing the encrypted device")
+			log.Debugln("Closing the encrypted device with command line: cryptsetup close", mountDevice)
 			if err := executil.CheckExec("cryptsetup", "close", mountDevice); err != nil {
 				log.Errorln("Error unmounting luksDevice:", err)
 			}
@@ -177,7 +179,10 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 	// TODO: there's some operator option we'd like to have here to default fs params
 	// i.e. a pre-config which switches on filesystem type to change boot params
 	filesystem := inputQuery.Filesystem
-	if err := executil.CheckExec("mkfs", "-V", "-t", filesystem, fsDevice); err != nil {
+
+	mkfsOpts := []string{"-V", "-t", filesystem, fsDevice}
+	log.Debugln("Creating filesystem with commandline: mkfs", strings.Join(mkfsOpts, " "))
+	if err := executil.CheckExec("mkfs", mkfsOpts...); err != nil {
 		return errwrap.Wrap(errFilesystemCreationFailed, err)
 	}
 

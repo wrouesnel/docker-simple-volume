@@ -9,6 +9,7 @@ import (
 	"os"
 	"github.com/wrouesnel/docker-simple-disk/volumelabel"
 	"gopkg.in/alecthomas/kingpin.v2"
+	"strings"
 )
 
 const SimpleMetadataLabel string = "simple-metadata"
@@ -180,9 +181,9 @@ func NewDeviceSelectionRule() DeviceSelectionRule {
 	}
 }
 
-// Takes a list of udev selection rules while will be applied individually and
-// the list of devices appended and returned. The final list is deduplicated
-// on the basis of DevPath (i.e. /dev/<device>)
+// GetDevicesByDevNode takes a list of udev selection rules while will be
+// applied individually and the list of devices appended and returned. The
+// final list is deduplicated on the basis of DevPath (i.e. /dev/<device>)
 func GetDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]string, error) {
 	udevCtx := udev.Udev{}
 
@@ -257,9 +258,10 @@ func GetDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]string, error)
 	return ret, nil
 }
 
-// Takes a disk path and returns a list of partition devices available on the
-// disk. This is eschewing manually reading GPT, which would be inefficient
-// since we already bind libudev.
+// GetPartitionDevicesFromDiskPath takes a disk path and returns a list of
+// partition devices available on the disk. Due to the limitations of what
+// udev typically records, this currently is simply a prefix match against
+// *all* the partitions on the system.
 func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 	// This function uses targeted device selction rules
 	rules := []DeviceSelectionRule{
@@ -275,8 +277,15 @@ func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 		return []string{}, err
 	}
 
+	matchedPartitions := []string{}
+	for _, part := range partitions {
+		if strings.HasPrefix(part, diskPath) {
+			matchedPartitions = append(matchedPartitions, part)
+		}
+	}
+
 	// Do the actual query
-	return partitions, nil
+	return matchedPartitions, nil
 }
 
 // GetInitializedDisks returns all disks on the current node which are
