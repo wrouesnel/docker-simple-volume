@@ -67,13 +67,14 @@ func main() {
 	dumpDeviceRulesCmd := dumpDeviceRulesCmd{}
 	dumpDeviceRules.Arg("disk path", "disk or device to reverse engineer selection rules for").StringVar(&dumpDeviceRulesCmd.targetDevice)
 
-	listRawCandidates := app.Command("list-raw-candidates", "list all possible candidate devices")
-
-	//listCandidates := app.Command("list-candidates", "list currently selectable candidate devices (not mounted)")
-
 	listDevicePartitions := app.Command("list-partitions", "list all partitions from a device")
 	listDevicePartitionsCmd := listDevicePartitionsCmd{}
 	listDevicePartitions.Arg("disk path", "disk or device to reverse engineer selection rules for").StringVar(&listDevicePartitionsCmd.targetDevice)
+
+	listRawCandidates := app.Command("list-raw-candidates", "list devices which form the initial pool")
+	listInitializedCandidates := app.Command("list-initialized-candidates", "list initialized simple devices")
+	listUninitializedCandidates := app.Command("list-uninitialized-candidates", "list uninitialized devices simple would initialize on request")
+	listRejectedCandidates := app.Command("list-rejected-candidates", "list candidate devices which were rejected for one reason or another")
 
 	forceInitDisk := app.Command("initialize-disk", "manually write an initialization value to a given block device")
 	forceInitCmdData := forceInitCmd{}
@@ -116,7 +117,7 @@ func main() {
 		os.Stdout.Write([]byte{'\n'})
 
 	case listRawCandidates.FullCommand():
-		devices, err := volumequery.GetDevicePaths([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		devices, err := volumequery.GetDevicePaths()
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -140,12 +141,35 @@ func main() {
 			fmt.Println(d)
 		}
 
-	//case listCandidates.FullCommand():
-	//	devices, err := volumequery.GetAvailableCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
-	//	if err != nil {
-	//		log.Fatalln(err)
-	//	}
-	//	fmt.Fprintln(os.Stderr, "Listing available candidate devices")
+	case listUninitializedCandidates.FullCommand():
+		_, uninitialized, _, err := volumequery.GetCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		if err != nil {
+			log.Fatalln("Failed while querying candidates:", err)
+		}
+		fmt.Fprintln(os.Stderr, "Listing initialized candidate devices for simple")
+		for _, d := range uninitialized {
+			fmt.Println(d)
+		}
+
+	case listInitializedCandidates.FullCommand():
+		initialized, _, _, err := volumequery.GetCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		if err != nil {
+			log.Fatalln("Failed while querying candidates:", err)
+		}
+		fmt.Fprintln(os.Stderr, "Listing initialized candidate devices for simple")
+		for _, d := range initialized {
+			fmt.Println(d)
+		}
+
+	case listRejectedCandidates.FullCommand():
+		_, _, rejected, err := volumequery.GetCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		if err != nil {
+			log.Fatalln("Failed while querying candidates:", err)
+		}
+		fmt.Fprintln(os.Stderr, "Listing initialized candidate devices for simple")
+		for _, d := range rejected {
+			fmt.Println(d)
+		}
 
 	case forceInitDisk.FullCommand():
 		if !forceInitCmdData.force == false {

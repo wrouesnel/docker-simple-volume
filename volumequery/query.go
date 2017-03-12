@@ -16,8 +16,7 @@ import (
 	"github.com/hashicorp/errwrap"
 	"path"
 	"path/filepath"
-
-	"github.com/wrouesnel/go.log"
+	
 	"strings"
 )
 
