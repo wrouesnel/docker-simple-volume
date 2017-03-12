@@ -146,7 +146,7 @@ func main() {
 		if err != nil {
 			log.Fatalln("Failed while querying candidates:", err)
 		}
-		fmt.Fprintln(os.Stderr, "Listing initialized candidate devices for simple")
+		fmt.Fprintln(os.Stderr, "Listing uninitialized candidate devices for simple")
 		for _, d := range uninitialized {
 			fmt.Println(d)
 		}
@@ -166,7 +166,7 @@ func main() {
 		if err != nil {
 			log.Fatalln("Failed while querying candidates:", err)
 		}
-		fmt.Fprintln(os.Stderr, "Listing initialized candidate devices for simple")
+		fmt.Fprintln(os.Stderr, "Listing rejected candidate devices for simple")
 		for _, d := range rejected {
 			fmt.Println(d)
 		}

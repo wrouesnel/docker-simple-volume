@@ -87,6 +87,20 @@ Recognized query language fields are shown below.
   If the disk is created, use this LUKS hash string. Ignored on match (but
   logs a warning if different).
 
+## simplectl
+All of the operations simple performs supporting disk provisioning are made
+available via the `simplectl` tool which can be used to prove out and test
+different functions, as well as manually lifecycle provisioning operations.
+
+For example to observe simple setting up an encrypted volume from a query
+path:
+```bash
+$ dd if=/dev/zero of=test.img bs=1M count=0 seek=10000
+$ losetup -f test.img
+$ simplectl --log-level=debug initialize-disk /dev/loop0 \
+    encryption-passphrase.yahFiepha9Cai9Iep1Baeb2ofeiKae_filesystem.ext4
+```
+
 ## Life Cycle
 When a docker container is launched with the volume driver, all local disks
 are scanned for their `udev` data. Unpartitioned disks without filesystems on
