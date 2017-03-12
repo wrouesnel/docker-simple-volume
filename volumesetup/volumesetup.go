@@ -80,6 +80,7 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 	}
 
 	label := volumequery.VolumeLabel{
+		Version: volumequery.VolumeLabelVersion,
 		Hostname: hostname,
 		MachineId: machineId,
 		Label: partitionLabel,

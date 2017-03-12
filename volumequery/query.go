@@ -2,14 +2,22 @@ package volumequery
 
 import (
 	"sort"
-	"github.com/jkeiser/iter"
-	"github.com/jochenvg/go-udev"
 	"encoding/json"
 	"bufio"
 	"os"
+
+	"github.com/jochenvg/go-udev"
+
 	"github.com/wrouesnel/docker-simple-disk/volumelabel"
 	"gopkg.in/alecthomas/kingpin.v2"
-	"strings"
+
+	//linuxproc "github.com/c9s/goprocinfo/linux"
+	//"github.com/wrouesnel/go.log"
+	"errors"
+	"fmt"
+	"path"
+	"github.com/hashicorp/errwrap"
+	"path/filepath"
 )
 
 const SimpleMetadataLabel string = "simple-metadata"
@@ -20,6 +28,22 @@ type NamingType string
 const (
 	NamingNumeric NamingType = "numeric"
 	NamingUUID    NamingType = "uuid"
+)
+
+const (
+	VolumeLabelVersion int = 1
+)
+
+const (
+	// Where to read mountpoint info from.
+	ProcMounts string = "/proc/mounts"
+)
+
+var (
+	errGotMultipleDisksWhenExpectedOne = errors.New("got multiple disk devices from a query when only 1 was expected")
+	errDiskNotFound = errors.New("given disk path did not resolve to a disk")
+	errUdevDatabaseLookup = errors.New("udev database snapshot failed")
+	errBadGlobPattern = errors.New("bad glob pattern")
 )
 
 // Specifies a volume query (this is a mash-up of query and create parameters
@@ -97,6 +121,8 @@ func VolumeQueryVar(settings kingpin.Settings, target *VolumeQuery) {
 
 // Struct representing labelled data (output as JSON)
 type VolumeLabel struct {
+	// Version of the label schema
+	Version int
 	// Hostname this disk was last initialized on
 	Hostname string `json:"hostname"`
 	// Machine ID this disk was last initialized on, if available
@@ -181,110 +207,314 @@ func NewDeviceSelectionRule() DeviceSelectionRule {
 	}
 }
 
-// GetDevicesByDevNode takes a list of udev selection rules while will be
+// getDevicesByDevNode takes a list of udev selection rules while will be
 // applied individually and the list of devices appended and returned. The
 // final list is deduplicated on the basis of DevPath (i.e. /dev/<device>)
-func GetDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]string, error) {
+// The list is returned as a list of *udev.Device nodes.
+//
+// Usage: multiple rules can have varying levels of specificity - devices
+// matched by a less specific rule are deduplicated on the basis of device path.
+//
+// Performance note: udev is weird about rule application - adding a match for
+// properties is an OR operation, not an AND which doesn't suite our purposes
+// at all, so this function just dumps the DB and implements it's own filtering.
+// This implements glob matching so it should broadly follow what's possible.
+func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, error) {
 	udevCtx := udev.Udev{}
 
-	devPaths := make(map[string]interface{})
+	// Deduplicates the device paths we've already seen.
+	devPaths := make(map[string]struct{})
 
+	// Returns the list of devices foudn through the list of selection rules
+	returnedDevices := []*udev.Device{}
+
+	deviceEnumerator := udevCtx.NewEnumerate()
+	// Only match initialized devices (global rule)
+	if err := deviceEnumerator.AddMatchIsInitialized(); err != nil {
+		return []*udev.Device{}, err
+	}
+
+	devices, err := deviceEnumerator.Devices()
+	if err != nil {
+		return []*udev.Device{}, errwrap.Wrap(errUdevDatabaseLookup, err)
+	}
+
+	// Filter the database snapshot by the selection rules from udev
 	for _, rule := range selectionRules {
-		deviceEnumerator := udevCtx.NewEnumerate()
+		var currentDevices []*udev.Device
+		var nextDevices []*udev.Device
 
-		// Only match initialized devices
-		if err := deviceEnumerator.AddMatchIsInitialized(); err != nil {
-			return []string{}, err
-		}
-
-		for _, subsystem := range rule.Subsystems {
-			if err := deviceEnumerator.AddMatchSubsystem(subsystem); err != nil {
-				return []string{}, err
-			}
-		}
-
-		for _, name := range rule.Name {
-			if err := deviceEnumerator.AddMatchSysname(name); err != nil {
-				return []string{}, err
-			}
-		}
-
-		for _, tag := range rule.Tag {
-			if err := deviceEnumerator.AddMatchTag(tag); err != nil {
-				return []string{}, err
-			}
-		}
-
-		for key, val := range rule.Properties {
-			if err := deviceEnumerator.AddMatchProperty(key, val); err != nil {
-				return []string{}, err
-			}
-		}
-
-		for key, val := range rule.Attrs {
-			if err := deviceEnumerator.AddMatchSysattr(key, val); err != nil {
-				return []string{}, err
-			}
-		}
-
-		// Do the actual query
-		iterator, err := deviceEnumerator.DeviceIterator()
-		if err != nil {
-			return []string{}, err
-		}
-
-		for {
-			val, err := iterator.Next()
-			if err != nil {
-				if err != iter.FINISHED {
-					return []string{}, err
+		// Filter mismatching subsystems
+		currentDevices = devices[:]	// Special: load the entire list
+		nextDevices = make([]*udev.Device, 0, len(currentDevices))
+		for _, device := range devices {
+			deviceMatch, err := func(device *udev.Device) (bool, error) {
+				for _, subsystem := range rule.Subsystems {
+					matched, err := filepath.Match(subsystem, device.Subsystem())
+					if err != nil {
+						return false, errwrap.Wrap(errBadGlobPattern, err)
+					}
+					// Any match failure cancels the device out of the set
+					if !matched {
+						return false, nil
+					}
 				}
-				break
+				// Got through rules with no failed matches.
+				return true, nil
+			}(device)
+			// Fail on an error
+			if err != nil {
+				return []*udev.Device{}, err
 			}
-			device := val.(*udev.Device)
+			if deviceMatch {
+				nextDevices = append(nextDevices, device)
+			}
+		}
 
-			devPaths[device.Devnode()] = nil
+		// Filter mismatching names
+		currentDevices = nextDevices[:]
+		nextDevices = make([]*udev.Device, 0, len(currentDevices))
+		for _, device := range devices {
+			deviceMatch, err := func(device *udev.Device) (bool, error) {
+				for _, subsystem := range rule.Name {
+					matched, err := filepath.Match(subsystem, filepath.Base(device.Syspath()))
+					if err != nil {
+						return false, errwrap.Wrap(errBadGlobPattern, err)
+					}
+					// Any match failure cancels the device out of the set
+					if !matched {
+						return false, nil
+					}
+				}
+				// Got through rules with no failed matches.
+				return true, nil
+			}(device)
+			// Fail on an error
+			if err != nil {
+				return []*udev.Device{}, err
+			}
+			if deviceMatch {
+				nextDevices = append(nextDevices, device)
+			}
+		}
+
+		// Filter mismatching tags
+		currentDevices = nextDevices[:]
+		nextDevices = make([]*udev.Device, 0, len(currentDevices))
+		for _, device := range devices {
+			deviceMatch, err := func(device *udev.Device) (bool,error) {
+				// Each tag rule must match *any* tag in the device tag set
+				for deviceTag, _ := range device.Tags() {
+					tagMatch := false
+					for _, tag := range rule.Tag {
+						matched, err := filepath.Match(tag, deviceTag)
+						if err != nil {
+							return false, errwrap.Wrap(errBadGlobPattern, err)
+						}
+						// Matched - can stop checking
+						if matched {
+							tagMatch = true
+							break
+						}
+					}
+					// A deviceTag did not match any rules, so device is not
+					// matched.
+					if !tagMatch {
+						return false, nil
+					}
+				}
+				// Got through and matched all tags. Device matches.
+				return true, nil
+			}(device)
+			// Fail on an error
+			if err != nil {
+				return []*udev.Device{}, err
+			}
+			if deviceMatch {
+				nextDevices = append(nextDevices, device)
+			}
+		}
+
+		// Filter mismatching properties
+		currentDevices = nextDevices[:]
+		nextDevices = make([]*udev.Device, 0, len(currentDevices))
+		for _, device := range devices {
+			// Use this closure to handle the complex rules.
+			deviceMatch, err := func(device *udev.Device) (bool, error) {
+				// Every key glob must match at least a key.
+				// Then it's value glob must match the given value.
+				// This is probably the most inefficient search space.
+				for keyGlob, valueGlob := range rule.Properties {
+					globMatch := false
+					for deviceKey, deviceValue := range device.Properties() {
+						keyMatched, err := filepath.Match(keyGlob, deviceKey)
+						if err != nil {
+							return false, errwrap.Wrap(errBadGlobPattern, err)
+						}
+						// Didn't match this key - try others
+						if !keyMatched {
+							continue
+						}
+						// Key glob matched. Does the value glob match its value?
+						valueMatched, err := filepath.Match(valueGlob, deviceValue)
+						if err != nil {
+							return false, errwrap.Wrap(errBadGlobPattern, err)
+						}
+						// Matched on the value, so can break loop and mark
+						// glob success
+						if valueMatched {
+							globMatch = true
+							break
+						}
+					}
+
+					if !globMatch {
+						// Glob match failed for this property rule, so it
+						// cancels the device out of the set.
+						return false, nil
+					}
+				}
+				// Got through every check and the device still matched.
+				return true, nil
+			}(device)
+			// Fail on an error
+			if err != nil {
+				return []*udev.Device{}, err
+			}
+			if deviceMatch {
+				nextDevices = append(nextDevices, device)
+			}
+		}
+		currentDevices = nextDevices[:]
+
+		// currentDevices is now the remaining devices which survived our rules.
+		// Figure out if we have new devices.
+		for _, device := range currentDevices {
+			if _, found := devPaths[device.Devnode()]; !found {
+				devPaths[device.Devnode()] = struct{}{}
+				returnedDevices = append(returnedDevices, device)
+			}
 		}
 	}
 
-	ret := []string{}
-	for key, _ := range devPaths {
-		ret = append(ret, key)
+	return returnedDevices, nil
+}
+
+// GetFullSelectionRulesForDevice queries a device by device path and returns a
+// selection rule block which would uniquely match it. Mostly useful for
+// simplectl to crosscheck rules.
+func GetFullSelectionRulesForDevice(diskPath string) ([]*DeviceSelectionRule, error) {
+	// This function uses targeted device selction rules
+	diskRules := []DeviceSelectionRule{
+		DeviceSelectionRule{
+			Properties: map[string]string{
+				"DEVNAME": diskPath,
+			},
+		},
 	}
 
-	// Sort the array
-	sort.Strings(ret)
+	devices, err := getDevicesByDevNode(diskRules)
+	if err != nil {
+		return nil, err
+	}
 
-	return ret, nil
+	if len(devices) == 0 {
+		return nil, errDiskNotFound
+	}
+
+	if len(devices) > 1 {
+		return nil, errGotMultipleDisksWhenExpectedOne
+	}
+	device := devices[0]
+
+	fixedRules := new(DeviceSelectionRule)
+
+	// Currently looks like no way to actually get this?
+	fixedRules.Name = []string{path.Base(device.Syspath())}
+
+	fixedRules.Attrs = make(map[string]string)
+	for attrName, _ := range device.Sysattrs() {
+		fixedRules.Attrs[attrName] = device.SysattrValue(attrName)
+	}
+	fixedRules.Properties = device.Properties()
+	fixedRules.Subsystems = []string{device.Subsystem()}
+
+	fixedRules.Tag = []string{}
+	for tagName, _ := range device.Tags() {
+		fixedRules.Tag = append(fixedRules.Tag, tagName)
+	}
+
+	return []*DeviceSelectionRule{fixedRules}, nil
+}
+
+// GetCandidateDisks returns a sorted list of disk devices which are matched by
+// the DeviceSelectionRule
+func GetCandidateDisks(selectionRules []DeviceSelectionRule) ([]string, error) {
+	devNodes := []string{}
+	devices, err := getDevicesByDevNode(selectionRules)
+	if err != nil {
+		return []string{}, err
+	}
+
+	for _, d := range devices {
+		devNodes = append(devNodes, d.Devnode())
+	}
+
+	// Sort the list
+	sort.Strings(devNodes)
+
+	return devNodes, nil
 }
 
 // GetPartitionDevicesFromDiskPath takes a disk path and returns a list of
-// partition devices available on the disk. Due to the limitations of what
-// udev typically records, this currently is simply a prefix match against
-// *all* the partitions on the system.
+// partition devices available on the disk.
 func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 	// This function uses targeted device selction rules
-	rules := []DeviceSelectionRule{
+	diskRules := []DeviceSelectionRule{
 		DeviceSelectionRule{
 			Properties: map[string]string{
+				"DEVNAME": diskPath,
+			},
+		},
+	}
+
+	devices, err := getDevicesByDevNode(diskRules)
+	if err != nil {
+		return []string{}, err
+	}
+	// Check only 1 disk was returned (doesn't make much sense otherwise so
+	// we rule it out here explicitely.
+	if len(devices) > 1 {
+		return []string{}, errGotMultipleDisksWhenExpectedOne
+	}
+	// No devices - raise an error, probably not what was expected.
+	if len(devices) == 0 {
+		return []string{}, errDiskNotFound
+	}
+	diskMajor := devices[0].Devnum().Major()
+	diskMinor := devices[0].Devnum().Minor()
+	partDiskVal := fmt.Sprintf("%d:%d", diskMajor, diskMinor)
+
+	// Okay, query up
+	partitionRules := []DeviceSelectionRule{
+		DeviceSelectionRule{
+			Properties: map[string]string{
+				"ID_PART_ENTRY_DISK": partDiskVal,
 				"DEVTYPE": "partition",
 			},
 		},
 	}
 
-	partitions, err := GetDevicesByDevNode(rules)
-	if err != nil {
-		return []string{}, err
-	}
+	partitionDevices, err := getDevicesByDevNode(partitionRules)
 
 	matchedPartitions := []string{}
-	for _, part := range partitions {
-		if strings.HasPrefix(part, diskPath) {
-			matchedPartitions = append(matchedPartitions, part)
-		}
+	for _, part := range partitionDevices {
+		matchedPartitions = append(matchedPartitions, part.Devnode())
 	}
 
-	// Do the actual query
+	// Sort the list
+	sort.Strings(matchedPartitions)
+
 	return matchedPartitions, nil
 }
 
@@ -295,8 +525,35 @@ func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 //}
 
 // GetCandidateDisks returns all disks on the current node which *could* be used
-// Filters the list of possible disks on the basis of whether or not they are
-// presently mounted, which removed
-//func GetCandidateDisks() []string {
+// and filters the list of possible disks on the basis of whether they are
+// presently mounted and marked exclusive.
+// selectionRules : should be set to the global device candidate rule to use for
+// 					setting
+//func GetAvailableCandidateDisks(selectionRules []DeviceSelectionRule) []string {
+//	// Read the mounts
+//	mounts, err := linuxproc.ReadMounts(ProcMounts)
+//	if err != nil {
+//		log.Errorln("Error reading mounts - no candidate devices will be allowed:", err)
+//		return []string{}
+//	}
+//	// Generate the map of disks with currently mounted partitions
+//	mountMap := make(map[string]struct{})
+//	for _, mnt := range mounts.Mounts {
+//		mountMap[mnt.Device] = struct{}{}
+//	}
+//	// Read the list of possible disks
+//	disks, err := GetDevicesByDevNode(selectionRules)
+//	if err != nil {
+//		return []string{}
+//	}
+//	// Remove disks which have partitions currently mounted from them
+//	for _, disk := range disks {
+//		// Ugly - feels like there should be a better way, but udev doesn't
+//		// actually get much more specific
+//
+//	}
+//
+//
+//
 //
 //}

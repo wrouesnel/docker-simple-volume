@@ -16,7 +16,17 @@ import (
 	"github.com/coreos/go-systemd/util"
 	"github.com/Songmu/prompter"
 	"github.com/wrouesnel/docker-simple-disk/volumesetup"
+	"encoding/json"
+	"io/ioutil"
 )
+
+type dumpDeviceRulesCmd struct {
+	targetDevice string
+}
+
+type listDevicePartitionsCmd struct {
+	targetDevice string
+}
 
 type forceInitCmd struct {
 	targetDevice string
@@ -50,7 +60,19 @@ func main() {
 	cmdlineSelectionRule := volumequery.NewDeviceSelectionRule()
 	config.DefaultAppFlags(app, &cmdlineSelectionRule)
 
+	rawQueryFromStdin := app.Command("raw-udev-query", "Read a JSON selection rules from stdin and run a udev query")
+
+	dumpDeviceRules := app.Command("dump-device-rules", "JSON print the parameter of a device as selection rules")
+	dumpDeviceRulesCmd := dumpDeviceRulesCmd{}
+	dumpDeviceRules.Arg("disk path", "disk or device to reverse engineer selection rules for").StringVar(&dumpDeviceRulesCmd.targetDevice)
+
 	listRawCandidates := app.Command("list-raw-candidates", "list all possible candidate devices")
+
+	//listCandidates := app.Command("list-candidates", "list currently selectable candidate devices (not mounted)")
+
+	listDevicePartitions := app.Command("list-partitions", "list all partitions from a device")
+	listDevicePartitionsCmd := listDevicePartitionsCmd{}
+	listDevicePartitions.Arg("disk path", "disk or device to reverse engineer selection rules for").StringVar(&listDevicePartitionsCmd.targetDevice)
 
 	forceInitDisk := app.Command("initialize-disk", "manually write an initialization value to a given block device")
 	forceInitCmdData := forceInitCmd{}
@@ -61,8 +83,38 @@ func main() {
 	volumequery.VolumeQueryVar(forceInitDisk.Arg("initializing query string", "query string used to initialize the device"), &forceInitCmdData.inputQueryString)
 
 	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
+	case rawQueryFromStdin.FullCommand():
+		// Run GetCandidateDisk but read from a JSON query.
+		jsonBytes, err := ioutil.ReadAll(os.Stdin)
+		if err != nil {
+			log.Fatalln("Error reading JSON from stdin.")
+		}
+		jsonRules := []volumequery.DeviceSelectionRule{}
+		if err := json.Unmarshal(jsonBytes, &jsonRules); err != nil {
+			log.Fatalln("Error unmarshalling query from JSON:", err)
+		}
+		devices, err := volumequery.GetCandidateDisks(jsonRules)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		for _, d := range devices {
+			fmt.Println(d)
+		}
+
+	case dumpDeviceRules.FullCommand():
+		rules, err := volumequery.GetFullSelectionRulesForDevice(dumpDeviceRulesCmd.targetDevice)
+		if err != nil {
+			log.Fatalln("Failed to query device:", err)
+		}
+		b, err := json.MarshalIndent(rules,""," ")
+		if err != nil {
+			log.Fatalln("JSON marshalling failed:", err)
+		}
+		os.Stdout.Write(b)
+		os.Stdout.Write([]byte{'\n'})
+
 	case listRawCandidates.FullCommand():
-		devices, err := volumequery.GetDevicesByDevNode([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		devices, err := volumequery.GetCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -70,6 +122,24 @@ func main() {
 		for _, d := range devices {
 			fmt.Println(d)
 		}
+
+	case listDevicePartitions.FullCommand():
+		devices, err := volumequery.GetPartitionDevicesFromDiskPath(listDevicePartitionsCmd.targetDevice)
+		if err != nil {
+			log.Fatalln("Failed to query device:", err)
+		}
+		fmt.Fprintln(os.Stderr, "Listing partitions of device")
+		for _, d := range devices {
+			fmt.Println(d)
+		}
+
+	//case listCandidates.FullCommand():
+	//	devices, err := volumequery.GetAvailableCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+	//	if err != nil {
+	//		log.Fatalln(err)
+	//	}
+	//	fmt.Fprintln(os.Stderr, "Listing available candidate devices")
+
 	case forceInitDisk.FullCommand():
 		if !forceInitCmdData.force == false {
 			if proceed := prompter.YesNo("Force initializing the given device. Are you sure?", false); !proceed {

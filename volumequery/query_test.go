@@ -31,7 +31,11 @@ func (this *QueryTestSuite) TestGetDevicesByDevNode_FindingDisks(c *C) {
 		},
 	}
 
-	disks, err := GetDevicesByDevNode(rules)
+	diskDevices, err := getDevicesByDevNode(rules)
+	disks := []string{}
+	for _, v := range diskDevices {
+		disks = append(disks, v.Devnode())
+	}
 	c.Assert(err, IsNil)                 // Check it works
 	c.Assert(len(disks), Not(Equals), 0) // Check we can find disks with search logic
 	c.Logf("Found disks: %s", strings.Join(disks," "))
@@ -52,7 +56,11 @@ func (this *QueryTestSuite) TestGetDevicesByDevNode_WithComplexRules(c *C) {
 		},
 	}
 
-	disks, err := GetDevicesByDevNode(rules)
+	diskDevices, err := getDevicesByDevNode(rules)
+	disks := []string{}
+	for _, v := range diskDevices {
+		disks = append(disks, v.Devnode())
+	}
 	c.Assert(err, IsNil) // Check it works
 	c.Assert(len(disks), Not(Equals), 0) // Check we can find disks with search logic
 	c.Logf("Found disks: %s", strings.Join(disks," "))
@@ -69,7 +77,11 @@ func (this *QueryTestSuite) TestGetPartitionsFromDiskPath(c *C) {
 		},
 	}
 
-	disks, err := GetDevicesByDevNode(rules)
+	diskDevices, err := getDevicesByDevNode(rules)
+	disks := []string{}
+	for _, v := range diskDevices {
+		disks = append(disks, v.Devnode())
+	}
 	c.Assert(err, IsNil)
 	c.Assert(len(disks), Not(Equals), 0, Commentf("Need at least 1 disk to pass this check."))
 
