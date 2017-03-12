@@ -135,7 +135,7 @@ func VolumeQueryVar(settings kingpin.Settings, target *VolumeQuery) {
 // Struct representing labelled data (output as JSON)
 type VolumeLabel struct {
 	// Version of the label schema
-	Version int
+	Version int	`json:"version"`
 	// Hostname this disk was last initialized on
 	Hostname string `json:"hostname"`
 	// Machine ID this disk was last initialized on, if available

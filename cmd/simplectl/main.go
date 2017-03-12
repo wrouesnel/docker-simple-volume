@@ -37,6 +37,11 @@ type forceInitCmd struct {
 	machineid string
 }
 
+type checkVolumeQueryCmd struct {
+	targetDevice string
+	inputQueryString volumequery.VolumeQuery
+}
+
 // Get the hostname
 func hostname() string {
 	h, err := os.Hostname()
@@ -83,6 +88,11 @@ func main() {
 	forceInitDisk.Flag("machine-id", "override machine-id for disk").Default(machineid()).StringVar(&forceInitCmdData.machineid)
 	forceInitDisk.Arg("block device","block device to partition and initialize").StringVar(&forceInitCmdData.targetDevice)
 	volumequery.VolumeQueryVar(forceInitDisk.Arg("initializing query string", "query string used to initialize the device"), &forceInitCmdData.inputQueryString)
+
+	checkVolumeQuery := app.Command("query-device", "run a given query string against a given device")
+	checkVolumeQueryCmdData := checkVolumeQueryCmd{}
+	checkVolumeQuery.Arg("block device","block device to partition and initialize").StringVar(&checkVolumeQueryCmdData.targetDevice)
+	volumequery.VolumeQueryVar(forceInitDisk.Arg("initializing query string", "query string used to initialize the device"), &checkVolumeQueryCmdData.inputQueryString)
 
 	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
 	case rawQueryFromStdin.FullCommand():
@@ -186,6 +196,20 @@ func main() {
 		)
 		if err != nil {
 			log.Fatalln("Failed while setting up device:", err)
+		}
+
+	case checkVolumeQuery.FullCommand():
+		fmt.Fprintln(os.Stderr, "Checking query against device:", checkVolumeQueryCmdData.targetDevice)
+		labelPath, dataPath, err := volumequery.GetDiskLabelAndVolumePath(checkVolumeQueryCmdData.targetDevice)
+		if err != nil {
+			log.Fatalln("Not an initialized or locateable device:", err)
+		}
+		if matches, err := volumequery.VolumeQueryMatch(&checkVolumeQueryCmdData.inputQueryString, labelPath, dataPath); err != nil {
+			log.Fatalln("Error while trying to run matcher:", err)
+		} else if matches {
+			fmt.Fprintln(os.Stdout, "Match")
+		} else {
+			fmt.Fprintln(os.Stdout, "No Match")
 		}
 	}
 

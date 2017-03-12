@@ -157,3 +157,4 @@ func CheckIfDiskIsBlankCandidate(diskPath string) (bool, error) {
 
 	return IsBlankDisk(isInitialized, failReason), nil
 }
+

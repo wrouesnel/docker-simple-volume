@@ -11,7 +11,7 @@ import (
 
 	"github.com/wrouesnel/docker-simple-disk/volumequery"
 	"github.com/wrouesnel/go.log"
-	"github.com/satori/go.uuid"
+	"github.com/wrouesnel/docker-simple-disk/volumeaccess"
 )
 
 var (
@@ -19,7 +19,7 @@ var (
 	errPartProbeFailed = errors.New("informing kernel of partition update failed")
 	errDiskDidNotInitialize = errors.New("disk did not return as initialized after it should have")
 	errCouldNotWriteVolumeLabel = errors.New("failed to write volumelabel")
-	errCryptSetupFailed = errors.New("error setting up encrypted volume")
+	errCryptSetupFailed = errors.New("error setting up encrypted device")
 	errFilesystemCreationFailed = errors.New("error creating filesystem")
 )
 
@@ -138,31 +138,20 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 			return errwrap.Wrap(errCryptSetupFailed, err)
 		}
 
-		mountDevice := uuid.NewV4().String()
-		cryptOpenOpts := []string{
-			"-v",
-			"open",
-			fsDevice,
-			mountDevice,
-		}
-
 		log.Infoln("Opening encrypted device for filesystem setup")
-		log.Debugln("Opening encrypted device with command line: cryptsetup", strings.Join(cryptOpenOpts, " "))
-		if err := executil.CheckExecWithInput(inputQuery.EncryptionKey, "cryptsetup", cryptOpenOpts...); err != nil {
-			return errwrap.Wrap(errCryptSetupFailed, err)
+		luksCtx, err := volumeaccess.OpenEncryptedDevice(inputQuery.EncryptionKey, fsDevice)
+		if err != nil {
+			return err
 		}
-
 		// Ensure the encrypted device will be unmounted when we finish here.
 		defer func() {
 			log.Infoln("Closing the encrypted device")
-			log.Debugln("Closing the encrypted device with command line: cryptsetup close", mountDevice)
-			if err := executil.CheckExec("cryptsetup", "close", mountDevice); err != nil {
-				log.Errorln("Error unmounting luksDevice:", err)
+			if err := luksCtx.Close(); err != nil {
+				log.Errorln("Error closing the encrypted device. Context may leak.")
 			}
 		}()
-
 		// TODO: does this *ever* change across linux distros? How do you detect if it does?
-		fsDevice = "/dev/mapper/" + mountDevice
+		fsDevice = luksCtx.GetDevicePath()
 		log.Debugln("fsDevice updated to cryptvolume is", fsDevice)
 	} else {
 		log.Debugln("fsDevice is data volume", fsDevice)
@@ -182,4 +171,3 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 	log.Infoln("Device initialization complete.")
 	return nil
 }
-
