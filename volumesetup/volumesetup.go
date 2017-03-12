@@ -20,10 +20,7 @@ var (
 	errCouldNotWriteVolumeLabel = errors.New("failed to write volumelabel")
 	errCryptSetupFailed = errors.New("error setting up encrypted volume")
 	errFilesystemCreationFailed = errors.New("error creating filesystem")
-	errFoundMultipleLabelPartitions = errors.New("found multiple label partitions after volume setup")
-	errFoundMultipleDataPartitions = errors.New("found multiple data partitions after volume setup")
-	errCouldNotFindLabelPartition = errors.New("could not find label partition after partitioning")
-	errCouldNotFindDataPartition = errors.New("could not find data partition after partitioning")
+
 )
 
 const (
@@ -104,14 +101,14 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 	for partPath, partDev := range partDevs {
 		if partDev.Properties["ID_PART_ENTRY_NAME"] == volumequery.SimpleMetadataLabel &&
 			partDev.Properties["ID_PART_ENTRY_TYPE"] == volumequery.SimpleMetadataUUID {
-			log.Debugln("Found simple label partition:", partPath)
 			if labelDevice != "" {
 				log.Errorln("Found more then 1 volume label partition on device:", blockDevice)
 				return errFoundMultipleLabelPartitions
 			}
 			labelDevice = partPath
+			log.Debugln("Found simple label partition:", labelDevice)
 		} else {
-			if dataDevice != "" {
+			if dataDevice == "" {
 				dataDevice = partPath
 				log.Debugln("Found simple data partition:", dataDevice)
 			} else {

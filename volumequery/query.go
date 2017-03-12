@@ -1,23 +1,24 @@
 package volumequery
 
 import (
-	"sort"
-	"encoding/json"
 	"bufio"
+	"encoding/json"
 	"os"
+	"sort"
 
 	"github.com/jochenvg/go-udev"
 
 	"github.com/wrouesnel/docker-simple-disk/volumelabel"
 	"gopkg.in/alecthomas/kingpin.v2"
 
-	//linuxproc "github.com/c9s/goprocinfo/linux"
-	//"github.com/wrouesnel/go.log"
 	"errors"
 	"fmt"
-	"path"
 	"github.com/hashicorp/errwrap"
+	"path"
 	"path/filepath"
+
+	"github.com/wrouesnel/go.log"
+	"strings"
 )
 
 const SimpleMetadataLabel string = "simple-metadata"
@@ -41,9 +42,22 @@ const (
 
 var (
 	errGotMultipleDisksWhenExpectedOne = errors.New("got multiple disk devices from a query when only 1 was expected")
-	errDiskNotFound = errors.New("given disk path did not resolve to a disk")
-	errUdevDatabaseLookup = errors.New("udev database snapshot failed")
-	errBadGlobPattern = errors.New("bad glob pattern")
+	errDiskNotFound                    = errors.New("given disk path did not resolve to a disk")
+	errUdevDatabaseLookup              = errors.New("udev database snapshot failed")
+	errBadGlobPattern                  = errors.New("bad glob pattern")
+)
+
+type DiskFailReason error
+
+var (
+	errUnknown                      = DiskFailReason(errors.New("disk status not known"))
+	errBlankDisk                    = DiskFailReason(errors.New("disk is completely blank"))
+	errHasAFilesystem               = DiskFailReason(errors.New("disk has no partitions but has a filesystem"))
+	errHasPartitionTable            = DiskFailReason(errors.New("disk has no partitions but has a partition table"))
+	errCouldNotFindLabelPartition   = DiskFailReason(errors.New("could not find label partition"))
+	errCouldNotFindDataPartition    = DiskFailReason(errors.New("could not find data partition"))
+	errFoundMultipleLabelPartitions = DiskFailReason(errors.New("found multiple label partitions after volume setup"))
+	errFoundMultipleDataPartitions  = DiskFailReason(errors.New("found multiple data partitions after volume setup"))
 )
 
 // Specifies a volume query (this is a mash-up of query and create parameters
@@ -132,7 +146,7 @@ type VolumeLabel struct {
 	// Last numbering assignment this disk had for the current label
 	Numbering string `json:"numbering"`
 	// Disk was created as an encrypted volume
-	Encrypted bool	`json:"encrypted"`
+	Encrypted bool `json:"encrypted"`
 	// Extra metadata
 	Metadata map[string]string `json:"metadata"`
 }
@@ -199,11 +213,23 @@ func (this *DeviceSelectionRule) Copy() DeviceSelectionRule {
 
 func NewDeviceSelectionRule() DeviceSelectionRule {
 	return DeviceSelectionRule{
-		Subsystems : make([]string, 0),
-		Name : make([]string, 0),
-		Tag : make([]string, 0),
+		Subsystems: make([]string, 0),
+		Name:       make([]string, 0),
+		Tag:        make([]string, 0),
 		Properties: make(map[string]string),
-		Attrs : make(map[string]string),
+		Attrs:      make(map[string]string),
+	}
+}
+
+// selectionRuleForDevicePath generates the selection rule set which would
+// query up a disk path.
+func selectionRuleForDevicePath(devicePath string) []DeviceSelectionRule {
+	return []DeviceSelectionRule{
+		DeviceSelectionRule{
+			Properties: map[string]string{
+				"DEVNAME": devicePath,
+			},
+		},
 	}
 }
 
@@ -264,7 +290,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) (map[string]*Devi
 		var nextDevices []*udev.Device
 
 		// Filter mismatching subsystems
-		currentDevices = devices[:]	// Special: load the entire list
+		currentDevices = devices[:] // Special: load the entire list
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
 		for _, device := range currentDevices {
 			deviceMatch, err := func(device *udev.Device) (bool, error) {
@@ -322,7 +348,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) (map[string]*Devi
 		currentDevices = nextDevices[:]
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
 		for _, device := range currentDevices {
-			deviceMatch, err := func(device *udev.Device) (bool,error) {
+			deviceMatch, err := func(device *udev.Device) (bool, error) {
 				// Each tag rule must match at least 1 device tag
 				for _, tag := range rule.Tag {
 					for deviceTag, _ := range device.Tags() {
@@ -417,15 +443,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) (map[string]*Devi
 // simplectl to crosscheck rules.
 func GetFullSelectionRuleForDevice(diskPath string) (*DeviceSelectionRule, error) {
 	// This function uses targeted device selction rules
-	diskRules := []DeviceSelectionRule{
-		DeviceSelectionRule{
-			Properties: map[string]string{
-				"DEVNAME": diskPath,
-			},
-		},
-	}
-
-	devices, err := getDevicesByDevNode(diskRules)
+	devices, err := getDevicesByDevNode(selectionRuleForDevicePath(diskPath))
 	if err != nil {
 		return nil, err
 	}
@@ -441,9 +459,9 @@ func GetFullSelectionRuleForDevice(diskPath string) (*DeviceSelectionRule, error
 	return nil, errDiskNotFound
 }
 
-// GetCandidateDevicePaths returns a sorted list of disk devices which are matched by
+// GetDevicePaths returns a sorted list of disk devices which are matched by
 // the DeviceSelectionRule
-func GetCandidateDevicePaths(selectionRules []DeviceSelectionRule) ([]string, error) {
+func GetDevicePaths(selectionRules []DeviceSelectionRule) ([]string, error) {
 	devNodes := []string{}
 	devices, err := getDevicesByDevNode(selectionRules)
 	if err != nil {
@@ -464,15 +482,7 @@ func GetCandidateDevicePaths(selectionRules []DeviceSelectionRule) ([]string, er
 // path deduplicated list of partitions on the disk.
 func GetPartitionDevicesFromDiskPath(diskPath string) (map[string]*DeviceSelectionRule, error) {
 	// This function uses targeted device selction rules
-	diskRules := []DeviceSelectionRule{
-		DeviceSelectionRule{
-			Properties: map[string]string{
-				"DEVNAME": diskPath,
-			},
-		},
-	}
-
-	devices, err := getDevicesByDevNode(diskRules)
+	devices, err := getDevicesByDevNode(selectionRuleForDevicePath(diskPath))
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +506,7 @@ func GetPartitionDevicesFromDiskPath(diskPath string) (map[string]*DeviceSelecti
 		DeviceSelectionRule{
 			Properties: map[string]string{
 				"ID_PART_ENTRY_DISK": partDiskVal,
-				"DEVTYPE": "partition",
+				"DEVTYPE":            "partition",
 			},
 		},
 	}
@@ -506,42 +516,155 @@ func GetPartitionDevicesFromDiskPath(diskPath string) (map[string]*DeviceSelecti
 	return partitionDevices, nil
 }
 
-// GetInitializedDisks returns all disks on the current node which are
-// initialized.
-//func GetInitializedDisks() []Disk {
-//
-//}
+// GetDiskDeviceFromPartitionPath takes a partition path and tries to query the
+// disk it is attached to by device number. It is guaranteed to only ever return
+// the one device.
+func GetDiskDeviceFromPartitionPath(partitionPath string) (map[string]*DeviceSelectionRule, error) {
+	// This function uses targeted device selction rules
+	partDevices, err := getDevicesByDevNode(selectionRuleForDevicePath(partitionPath))
+	if err != nil {
+		return nil, err
+	}
 
-// GetCandidateDevicePaths returns all disks on the current node which *could* be used
-// and filters the list of possible disks on the basis of whether they are
-// presently mounted and marked exclusive.
-// selectionRules : should be set to the global device candidate rule to use for
-// 					setting
-//func GetAvailableCandidateDisks(selectionRules []DeviceSelectionRule) []string {
-//	// Read the mounts
-//	mounts, err := linuxproc.ReadMounts(ProcMounts)
-//	if err != nil {
-//		log.Errorln("Error reading mounts - no candidate devices will be allowed:", err)
-//		return []string{}
-//	}
-//	// Generate the map of disks with currently mounted partitions
-//	mountMap := make(map[string]struct{})
-//	for _, mnt := range mounts.Mounts {
-//		mountMap[mnt.Device] = struct{}{}
-//	}
-//	// Read the list of possible disks
-//	disks, err := GetDevicesByDevNode(selectionRules)
-//	if err != nil {
-//		return []string{}
-//	}
-//	// Remove disks which have partitions currently mounted from them
-//	for _, disk := range disks {
-//		// Ugly - feels like there should be a better way, but udev doesn't
-//		// actually get much more specific
-//
-//	}
-//
-//
-//
-//
-//}
+	var major, minor string
+	for _, partDev := range partDevices {
+		diskTuple := strings.Split(partDev.Properties["ID_PART_ENTRY_DISK"], ":")
+
+		// If found major minor and do not have agreement, error.
+		if (major != "" && major != diskTuple[0]) || minor != "" && minor != diskTuple[1] {
+			return nil, errGotMultipleDisksWhenExpectedOne
+		}
+
+		if major == "" && minor == "" {
+			major = diskTuple[0]
+			minor = diskTuple[1]
+		}
+	}
+
+	// Query up the disk from the major/minor number
+	diskRules := []DeviceSelectionRule{
+		DeviceSelectionRule{
+			Properties: map[string]string{
+				"MAJOR": major,
+				"MINOR": minor,
+			},
+		},
+	}
+	diskDevices, err := getDevicesByDevNode(diskRules)
+	if len(diskDevices) == 0 {
+		return nil, errDiskNotFound
+	}
+
+	if len(diskDevices) > 1 {
+		return nil, errGotMultipleDisksWhenExpectedOne
+	}
+
+	return diskDevices, nil
+}
+
+// GetCandidateDisks returns all disks that simple might be able to use safely.
+// A safe disk is either one which is already labelled as a simple disk, or
+// one which is unpartitioned and does not appear to contain a filesystem or
+// appear in the mount table.
+func GetCandidateDisks(selectionRules []DeviceSelectionRule) (map[string]*DeviceSelectionRule, error) {
+
+}
+
+// GetInitializedDisks returns all disks on the current node which are
+// initialized for simple.
+func GetInitializedDisks(selectionRules []DeviceSelectionRule) (uninitializedDisks []string, initializedDisks []Disk, rerr error) {
+	// Get all possible candidate devices
+	disksPath, err := GetDevicePaths(selectionRules)
+	if err != nil {
+		rerr = err
+		return
+	}
+
+	// Get the partitions of every candidate
+	for _, diskPath := range disksPath {
+
+	}
+}
+
+// CheckIfDiskIsInitialized takes a device path and determines if it is a
+// simple disk. It returns the outcome of the assessment, a reason code if the
+// assessment fails, and a failure code if the lookup fails.
+func CheckIfDiskIsInitialized(diskPath string) (bool, DiskFailReason, error) {
+	partDevices, err := GetPartitionDevicesFromDiskPath(diskPath)
+	if err != nil {
+		return false, errUnknown, err
+	}
+
+	if len(partDevices) == 0 {
+		// Okay, no partitions. Does it have a filesystem?
+		device, err := GetFullSelectionRuleForDevice(diskPath)
+		if err != nil {
+			return false, errUnknown, err
+		}
+
+		if _, found := device.Properties["ID_FS_USAGE"]; found {
+			// Has a filesystem. Don't touch it.
+			return false, errHasAFilesystem, nil
+		} else if _, found := device.Properties["ID_PART_TABLE_TYPE"]; found {
+			// Has a partition table. We wouldn't have create this, so don't
+			// touch it.
+			return false, errHasPartitionTable, nil
+		}
+
+		// No filesystems or partition tables - so just a blank disk.
+		return false, errBlankDisk, nil
+	}
+
+	// Has some partitions. Is one a label partition
+	labelDevice := ""
+	dataDevice := ""
+	for partPath, partDev := range partDevices {
+		if partDev.Properties["ID_PART_ENTRY_NAME"] == SimpleMetadataLabel &&
+			partDev.Properties["ID_PART_ENTRY_TYPE"] == SimpleMetadataUUID {
+			if labelDevice != "" {
+				return false, errFoundMultipleLabelPartitions, nil
+			}
+			labelDevice = partPath
+			log.Debugln("Found simple label partition:", labelDevice)
+		} else {
+			if dataDevice == "" {
+				dataDevice = partPath
+				log.Debugln("Found simple data partition:", dataDevice)
+			} else {
+				return false, errFoundMultipleDataPartitions, nil
+			}
+		}
+	}
+
+	if labelDevice == "" {
+		return false, errCouldNotFindLabelPartition, nil
+	}
+
+	if dataDevice == "" {
+		return false, errCouldNotFindDataPartition, nil
+	}
+
+	// Disk is initialized and formatted properly.
+	return true, nil, nil
+}
+
+// CheckIfDiskIsBlankCandidate ensures the disk has no filesystems, no partition
+// table, and can be safely recruited as a simple disk.
+func CheckIfDiskIsBlankCandidate(diskPath string) (bool, error) {
+	isInitialized, failReason, err := CheckIfDiskIsInitialized(diskPath)
+	if err != nil {
+		return false, err
+	}
+	// If disk is already initialized, its definitely not blank.
+	if isInitialized {
+		return false, nil
+	}
+
+	// If the disk isn't an initialized disk because it's a blank disk, then its
+	// a candidate to be initialized.
+	if failReason == errBlankDisk {
+		return true, nil
+	}
+
+	return false, nil
+}

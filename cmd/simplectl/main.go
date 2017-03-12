@@ -94,7 +94,7 @@ func main() {
 		if err := json.Unmarshal(jsonBytes, &jsonRules); err != nil {
 			log.Fatalln("Error unmarshalling query from JSON:", err)
 		}
-		devices, err := volumequery.GetCandidateDevicePaths(jsonRules)
+		devices, err := volumequery.GetDevicePaths(jsonRules)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -116,7 +116,7 @@ func main() {
 		os.Stdout.Write([]byte{'\n'})
 
 	case listRawCandidates.FullCommand():
-		devices, err := volumequery.GetCandidateDevicePaths([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		devices, err := volumequery.GetDevicePaths([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
 		if err != nil {
 			log.Fatalln(err)
 		}
