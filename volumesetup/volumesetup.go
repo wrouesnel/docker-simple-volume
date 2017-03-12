@@ -17,11 +17,13 @@ import (
 var (
 	errPartitioningFailed = errors.New("failed to partition disk")
 	errPartProbeFailed = errors.New("informing kernel of partition update failed")
-	errNoPartitionsFound = errors.New("no (0) disk partitions were found after disk partitioning")
-	errPartitionNotFoundAfterPartitioning = errors.New("disk partition was not found after disk partitioning")
 	errCouldNotWriteVolumeLabel = errors.New("failed to write volumelabel")
 	errCryptSetupFailed = errors.New("error setting up encrypted volume")
 	errFilesystemCreationFailed = errors.New("error creating filesystem")
+	errFoundMultipleLabelPartitions = errors.New("found multiple label partitions after volume setup")
+	errFoundMultipleDataPartitions = errors.New("found multiple data partitions after volume setup")
+	errCouldNotFindLabelPartition = errors.New("could not find label partition after partitioning")
+	errCouldNotFindDataPartition = errors.New("could not find data partition after partitioning")
 )
 
 const (
@@ -89,36 +91,60 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 		Metadata: make(map[string]string),
 	}
 
-	log.Infoln("Querying partitions from udev")
-	partitions, err := volumequery.GetPartitionDevicesFromDiskPath(blockDevice)
-	if err != nil {
-		return errwrap.Wrap(errPartitionNotFoundAfterPartitioning, err)
-	}
-	// No partitions found!
-	if len(partitions) == 0 {
-		return errNoPartitionsFound
-	}
-	log.Debugln("Found partitions for device:", strings.Join(partitions, " "))
+	log.Infoln("Setting up label volume")
 
-	// TODO: check that the partition is the volumelabel / query up the volume
-	labelDevice := blockDevice + "p1"
-	log.Debugln("Volume label device is:", labelDevice)
-
-	log.Infoln("Writing volumelabel to device")
-	labelBytes, err := volumequery.SerializeVolumeLabel(&label)
+	log.Debugln("Querying partitions from udev")
+	partDevs, err := volumequery.GetPartitionDevicesFromDiskPath(blockDevice)
 	if err != nil {
 		return err
+	}
+	// Loop through the partitions and check we can find a volume label device
+	labelDevice := ""
+	dataDevice := ""
+	for partPath, partDev := range partDevs {
+		if partDev.Properties["ID_PART_ENTRY_NAME"] == volumequery.SimpleMetadataLabel &&
+			partDev.Properties["ID_PART_ENTRY_TYPE"] == volumequery.SimpleMetadataUUID {
+			log.Debugln("Found simple label partition:", partPath)
+			if labelDevice != "" {
+				log.Errorln("Found more then 1 volume label partition on device:", blockDevice)
+				return errFoundMultipleLabelPartitions
+			}
+			labelDevice = partPath
+		} else {
+			if dataDevice != "" {
+				dataDevice = partPath
+				log.Debugln("Found simple data partition:", dataDevice)
+			} else {
+				log.Errorln("Found more then 1 volume data partition on device:", blockDevice)
+				return errFoundMultipleDataPartitions
+			}
+		}
+	}
+
+	if labelDevice == "" {
+		log.Errorln("No label partition was found on the device after initialization")
+		return errCouldNotFindLabelPartition
+	}
+
+	if dataDevice == "" {
+		log.Errorln("No data partition was found on the device after initialization")
+		return errCouldNotFindDataPartition
+	}
+
+	log.Infoln("Label Device for", blockDevice, "is", labelDevice)
+
+	log.Infoln("Writing label to:", labelDevice)
+	labelBytes, err := volumequery.SerializeVolumeLabel(&label)
+	if err != nil {
+		return errwrap.Wrap(errCouldNotWriteVolumeLabel, err)
 	}
 
 	if err := WriteAndSyncExistingFile(labelDevice, labelBytes, os.FileMode(0600)); err != nil {
 		return errwrap.Wrap(errCouldNotWriteVolumeLabel, err)
 	}
 
-	// Okay we got this far. We need to setup the data partition.
-
-	// TODO: check the second partition exists / query it up
-	var fsDevice string
-	fsDevice = blockDevice + "p2"
+	log.Infoln("Setting up data volume")
+	fsDevice := dataDevice
 
 	// Is this an encrypted volume?
 	if isEncrypted {

@@ -18,6 +18,7 @@ import (
 	"github.com/wrouesnel/docker-simple-disk/volumesetup"
 	"encoding/json"
 	"io/ioutil"
+	"sort"
 )
 
 type dumpDeviceRulesCmd struct {
@@ -93,7 +94,7 @@ func main() {
 		if err := json.Unmarshal(jsonBytes, &jsonRules); err != nil {
 			log.Fatalln("Error unmarshalling query from JSON:", err)
 		}
-		devices, err := volumequery.GetCandidateDisks(jsonRules)
+		devices, err := volumequery.GetCandidateDevicePaths(jsonRules)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -102,10 +103,11 @@ func main() {
 		}
 
 	case dumpDeviceRules.FullCommand():
-		rules, err := volumequery.GetFullSelectionRulesForDevice(dumpDeviceRulesCmd.targetDevice)
+		rule, err := volumequery.GetFullSelectionRuleForDevice(dumpDeviceRulesCmd.targetDevice)
 		if err != nil {
 			log.Fatalln("Failed to query device:", err)
 		}
+		rules := []*volumequery.DeviceSelectionRule{rule}
 		b, err := json.MarshalIndent(rules,""," ")
 		if err != nil {
 			log.Fatalln("JSON marshalling failed:", err)
@@ -114,7 +116,7 @@ func main() {
 		os.Stdout.Write([]byte{'\n'})
 
 	case listRawCandidates.FullCommand():
-		devices, err := volumequery.GetCandidateDisks([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
+		devices, err := volumequery.GetCandidateDevicePaths([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -129,7 +131,12 @@ func main() {
 			log.Fatalln("Failed to query device:", err)
 		}
 		fmt.Fprintln(os.Stderr, "Listing partitions of device")
-		for _, d := range devices {
+		devPaths := make([]string, 0, len(devices))
+		for d, _ := range devices {
+			devPaths = append(devPaths, d)
+		}
+		sort.Strings(devPaths)
+		for _, d := range devPaths {
 			fmt.Println(d)
 		}
 

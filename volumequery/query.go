@@ -207,6 +207,28 @@ func NewDeviceSelectionRule() DeviceSelectionRule {
 	}
 }
 
+// deviceToSelectionRule converts a udev Device to a selection rule.
+func deviceToSelectionRule(device *udev.Device) *DeviceSelectionRule {
+	fixedRule := new(DeviceSelectionRule)
+
+	// Currently looks like no way to actually get this?
+	fixedRule.Name = []string{path.Base(device.Syspath())}
+
+	fixedRule.Attrs = make(map[string]string)
+	for attrName, _ := range device.Sysattrs() {
+		fixedRule.Attrs[attrName] = device.SysattrValue(attrName)
+	}
+	fixedRule.Properties = device.Properties()
+	fixedRule.Subsystems = []string{device.Subsystem()}
+
+	fixedRule.Tag = []string{}
+	for tagName, _ := range device.Tags() {
+		fixedRule.Tag = append(fixedRule.Tag, tagName)
+	}
+
+	return fixedRule
+}
+
 // getDevicesByDevNode takes a list of udev selection rules while will be
 // applied individually and the list of devices appended and returned. The
 // final list is deduplicated on the basis of DevPath (i.e. /dev/<device>)
@@ -219,24 +241,21 @@ func NewDeviceSelectionRule() DeviceSelectionRule {
 // properties is an OR operation, not an AND which doesn't suite our purposes
 // at all, so this function just dumps the DB and implements it's own filtering.
 // This implements glob matching so it should broadly follow what's possible.
-func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, error) {
+func getDevicesByDevNode(selectionRules []DeviceSelectionRule) (map[string]*DeviceSelectionRule, error) {
 	udevCtx := udev.Udev{}
 
 	// Deduplicates the device paths we've already seen.
-	devPaths := make(map[string]struct{})
-
-	// Returns the list of devices foudn through the list of selection rules
-	returnedDevices := []*udev.Device{}
+	devPaths := make(map[string]*DeviceSelectionRule)
 
 	deviceEnumerator := udevCtx.NewEnumerate()
 	// Only match initialized devices (global rule)
 	if err := deviceEnumerator.AddMatchIsInitialized(); err != nil {
-		return []*udev.Device{}, err
+		return nil, err
 	}
 
 	devices, err := deviceEnumerator.Devices()
 	if err != nil {
-		return []*udev.Device{}, errwrap.Wrap(errUdevDatabaseLookup, err)
+		return nil, errwrap.Wrap(errUdevDatabaseLookup, err)
 	}
 
 	// Filter the database snapshot by the selection rules from udev
@@ -247,7 +266,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 		// Filter mismatching subsystems
 		currentDevices = devices[:]	// Special: load the entire list
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
-		for _, device := range devices {
+		for _, device := range currentDevices {
 			deviceMatch, err := func(device *udev.Device) (bool, error) {
 				for _, subsystem := range rule.Subsystems {
 					matched, err := filepath.Match(subsystem, device.Subsystem())
@@ -264,7 +283,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 			}(device)
 			// Fail on an error
 			if err != nil {
-				return []*udev.Device{}, err
+				return nil, err
 			}
 			if deviceMatch {
 				nextDevices = append(nextDevices, device)
@@ -274,10 +293,11 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 		// Filter mismatching names
 		currentDevices = nextDevices[:]
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
-		for _, device := range devices {
+		for _, device := range currentDevices {
 			deviceMatch, err := func(device *udev.Device) (bool, error) {
-				for _, subsystem := range rule.Name {
-					matched, err := filepath.Match(subsystem, filepath.Base(device.Syspath()))
+				for _, name := range rule.Name {
+					deviceName := filepath.Base(device.Syspath())
+					matched, err := filepath.Match(name, deviceName)
 					if err != nil {
 						return false, errwrap.Wrap(errBadGlobPattern, err)
 					}
@@ -291,7 +311,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 			}(device)
 			// Fail on an error
 			if err != nil {
-				return []*udev.Device{}, err
+				return nil, err
 			}
 			if deviceMatch {
 				nextDevices = append(nextDevices, device)
@@ -301,26 +321,20 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 		// Filter mismatching tags
 		currentDevices = nextDevices[:]
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
-		for _, device := range devices {
+		for _, device := range currentDevices {
 			deviceMatch, err := func(device *udev.Device) (bool,error) {
-				// Each tag rule must match *any* tag in the device tag set
-				for deviceTag, _ := range device.Tags() {
-					tagMatch := false
-					for _, tag := range rule.Tag {
+				// Each tag rule must match at least 1 device tag
+				for _, tag := range rule.Tag {
+					for deviceTag, _ := range device.Tags() {
 						matched, err := filepath.Match(tag, deviceTag)
 						if err != nil {
 							return false, errwrap.Wrap(errBadGlobPattern, err)
 						}
-						// Matched - can stop checking
-						if matched {
-							tagMatch = true
-							break
+						// If the match failed, then this tag rule is not
+						// satisfied, and so the device is not statisfied.
+						if !matched {
+							return false, nil
 						}
-					}
-					// A deviceTag did not match any rules, so device is not
-					// matched.
-					if !tagMatch {
-						return false, nil
 					}
 				}
 				// Got through and matched all tags. Device matches.
@@ -328,7 +342,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 			}(device)
 			// Fail on an error
 			if err != nil {
-				return []*udev.Device{}, err
+				return nil, err
 			}
 			if deviceMatch {
 				nextDevices = append(nextDevices, device)
@@ -338,7 +352,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 		// Filter mismatching properties
 		currentDevices = nextDevices[:]
 		nextDevices = make([]*udev.Device, 0, len(currentDevices))
-		for _, device := range devices {
+		for _, device := range currentDevices {
 			// Use this closure to handle the complex rules.
 			deviceMatch, err := func(device *udev.Device) (bool, error) {
 				// Every key glob must match at least a key.
@@ -379,7 +393,7 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 			}(device)
 			// Fail on an error
 			if err != nil {
-				return []*udev.Device{}, err
+				return nil, err
 			}
 			if deviceMatch {
 				nextDevices = append(nextDevices, device)
@@ -391,19 +405,17 @@ func getDevicesByDevNode(selectionRules []DeviceSelectionRule) ([]*udev.Device, 
 		// Figure out if we have new devices.
 		for _, device := range currentDevices {
 			if _, found := devPaths[device.Devnode()]; !found {
-				devPaths[device.Devnode()] = struct{}{}
-				returnedDevices = append(returnedDevices, device)
+				devPaths[device.Devnode()] = deviceToSelectionRule(device)
 			}
 		}
 	}
-
-	return returnedDevices, nil
+	return devPaths, nil
 }
 
 // GetFullSelectionRulesForDevice queries a device by device path and returns a
 // selection rule block which would uniquely match it. Mostly useful for
 // simplectl to crosscheck rules.
-func GetFullSelectionRulesForDevice(diskPath string) ([]*DeviceSelectionRule, error) {
+func GetFullSelectionRuleForDevice(diskPath string) (*DeviceSelectionRule, error) {
 	// This function uses targeted device selction rules
 	diskRules := []DeviceSelectionRule{
 		DeviceSelectionRule{
@@ -418,46 +430,28 @@ func GetFullSelectionRulesForDevice(diskPath string) ([]*DeviceSelectionRule, er
 		return nil, err
 	}
 
-	if len(devices) == 0 {
-		return nil, errDiskNotFound
-	}
-
 	if len(devices) > 1 {
 		return nil, errGotMultipleDisksWhenExpectedOne
 	}
-	device := devices[0]
 
-	fixedRules := new(DeviceSelectionRule)
-
-	// Currently looks like no way to actually get this?
-	fixedRules.Name = []string{path.Base(device.Syspath())}
-
-	fixedRules.Attrs = make(map[string]string)
-	for attrName, _ := range device.Sysattrs() {
-		fixedRules.Attrs[attrName] = device.SysattrValue(attrName)
-	}
-	fixedRules.Properties = device.Properties()
-	fixedRules.Subsystems = []string{device.Subsystem()}
-
-	fixedRules.Tag = []string{}
-	for tagName, _ := range device.Tags() {
-		fixedRules.Tag = append(fixedRules.Tag, tagName)
+	for _, device := range devices {
+		return device, nil
 	}
 
-	return []*DeviceSelectionRule{fixedRules}, nil
+	return nil, errDiskNotFound
 }
 
-// GetCandidateDisks returns a sorted list of disk devices which are matched by
+// GetCandidateDevicePaths returns a sorted list of disk devices which are matched by
 // the DeviceSelectionRule
-func GetCandidateDisks(selectionRules []DeviceSelectionRule) ([]string, error) {
+func GetCandidateDevicePaths(selectionRules []DeviceSelectionRule) ([]string, error) {
 	devNodes := []string{}
 	devices, err := getDevicesByDevNode(selectionRules)
 	if err != nil {
 		return []string{}, err
 	}
 
-	for _, d := range devices {
-		devNodes = append(devNodes, d.Devnode())
+	for devNode, _ := range devices {
+		devNodes = append(devNodes, devNode)
 	}
 
 	// Sort the list
@@ -466,9 +460,9 @@ func GetCandidateDisks(selectionRules []DeviceSelectionRule) ([]string, error) {
 	return devNodes, nil
 }
 
-// GetPartitionDevicesFromDiskPath takes a disk path and returns a list of
-// partition devices available on the disk.
-func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
+// GetPartitionDevicesFromDiskPath takes a disk path and returns the device
+// path deduplicated list of partitions on the disk.
+func GetPartitionDevicesFromDiskPath(diskPath string) (map[string]*DeviceSelectionRule, error) {
 	// This function uses targeted device selction rules
 	diskRules := []DeviceSelectionRule{
 		DeviceSelectionRule{
@@ -480,22 +474,24 @@ func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 
 	devices, err := getDevicesByDevNode(diskRules)
 	if err != nil {
-		return []string{}, err
+		return nil, err
 	}
 	// Check only 1 disk was returned (doesn't make much sense otherwise so
 	// we rule it out here explicitely.
 	if len(devices) > 1 {
-		return []string{}, errGotMultipleDisksWhenExpectedOne
+		return nil, errGotMultipleDisksWhenExpectedOne
 	}
-	// No devices - raise an error, probably not what was expected.
-	if len(devices) == 0 {
-		return []string{}, errDiskNotFound
-	}
-	diskMajor := devices[0].Devnum().Major()
-	diskMinor := devices[0].Devnum().Minor()
-	partDiskVal := fmt.Sprintf("%d:%d", diskMajor, diskMinor)
 
-	// Okay, query up
+	partDiskVal := ""
+	for _, device := range devices {
+		partDiskVal = fmt.Sprintf("%s:%s",
+			device.Properties["MAJOR"], device.Properties["MINOR"])
+	}
+	if partDiskVal == "" {
+		return nil, errDiskNotFound
+	}
+
+	// Okay, query up the partitions
 	partitionRules := []DeviceSelectionRule{
 		DeviceSelectionRule{
 			Properties: map[string]string{
@@ -507,15 +503,7 @@ func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 
 	partitionDevices, err := getDevicesByDevNode(partitionRules)
 
-	matchedPartitions := []string{}
-	for _, part := range partitionDevices {
-		matchedPartitions = append(matchedPartitions, part.Devnode())
-	}
-
-	// Sort the list
-	sort.Strings(matchedPartitions)
-
-	return matchedPartitions, nil
+	return partitionDevices, nil
 }
 
 // GetInitializedDisks returns all disks on the current node which are
@@ -524,7 +512,7 @@ func GetPartitionDevicesFromDiskPath(diskPath string) ([]string, error) {
 //
 //}
 
-// GetCandidateDisks returns all disks on the current node which *could* be used
+// GetCandidateDevicePaths returns all disks on the current node which *could* be used
 // and filters the list of possible disks on the basis of whether they are
 // presently mounted and marked exclusive.
 // selectionRules : should be set to the global device candidate rule to use for
