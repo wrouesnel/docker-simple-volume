@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/errwrap"
 	"path"
 	"path/filepath"
-	
+
 	"strings"
 )
 
@@ -68,7 +68,7 @@ type VolumeQuery struct {
 	// Hostname disk should be associated with
 	OwnHostname bool `volumelabel:"own-hostname"`
 	// MachineID the disk should be associated with
-	OwnMachineId string `volumelabel:"own-machine-id"`
+	OwnMachineId bool `volumelabel:"own-machine-id"`
 
 	// Should the disk have been initialized by the filesystem
 	Initialized bool `volumelabel:"initialized"`
