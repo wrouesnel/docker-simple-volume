@@ -117,7 +117,7 @@ func main() {
 		os.Stdout.Write([]byte{'\n'})
 
 	case listRawCandidates.FullCommand():
-		devices, err := volumequery.GetDevicePaths()
+		devices, err := volumequery.GetDevicePaths([]volumequery.DeviceSelectionRule{cmdlineSelectionRule})
 		if err != nil {
 			log.Fatalln(err)
 		}

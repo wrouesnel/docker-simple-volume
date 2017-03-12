@@ -17,10 +17,10 @@ import (
 var (
 	errPartitioningFailed = errors.New("failed to partition disk")
 	errPartProbeFailed = errors.New("informing kernel of partition update failed")
+	errDiskDidNotInitialize = errors.New("disk did not return as initialized after it should have")
 	errCouldNotWriteVolumeLabel = errors.New("failed to write volumelabel")
 	errCryptSetupFailed = errors.New("error setting up encrypted volume")
 	errFilesystemCreationFailed = errors.New("error creating filesystem")
-
 )
 
 const (
@@ -88,54 +88,20 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 		Metadata: make(map[string]string),
 	}
 
-	log.Infoln("Setting up label volume")
-
-	log.Debugln("Querying partitions from udev")
-	partDevs, err := volumequery.GetPartitionDevicesFromDiskPath(blockDevice)
+	log.Infoln("Checking new device is initialized")
+	labelDevice, dataDevice, err := volumequery.GetDiskLabelAndVolumePath(blockDevice)
 	if err != nil {
-		return err
+		return errwrap.Wrap(errDiskDidNotInitialize, err)
 	}
-	// Loop through the partitions and check we can find a volume label device
-	labelDevice := ""
-	dataDevice := ""
-	for partPath, partDev := range partDevs {
-		if partDev.Properties["ID_PART_ENTRY_NAME"] == volumequery.SimpleMetadataLabel &&
-			partDev.Properties["ID_PART_ENTRY_TYPE"] == volumequery.SimpleMetadataUUID {
-			if labelDevice != "" {
-				log.Errorln("Found more then 1 volume label partition on device:", blockDevice)
-				return errFoundMultipleLabelPartitions
-			}
-			labelDevice = partPath
-			log.Debugln("Found simple label partition:", labelDevice)
-		} else {
-			if dataDevice == "" {
-				dataDevice = partPath
-				log.Debugln("Found simple data partition:", dataDevice)
-			} else {
-				log.Errorln("Found more then 1 volume data partition on device:", blockDevice)
-				return errFoundMultipleDataPartitions
-			}
-		}
-	}
+	log.Infoln("Disk Device", blockDevice, "has label device", labelDevice, "and data device", dataDevice)
 
-	if labelDevice == "" {
-		log.Errorln("No label partition was found on the device after initialization")
-		return errCouldNotFindLabelPartition
-	}
-
-	if dataDevice == "" {
-		log.Errorln("No data partition was found on the device after initialization")
-		return errCouldNotFindDataPartition
-	}
-
-	log.Infoln("Label Device for", blockDevice, "is", labelDevice)
-
-	log.Infoln("Writing label to:", labelDevice)
+	log.Infoln("Writing label content to:", labelDevice)
+	log.Debugln("Serializing volume label")
 	labelBytes, err := volumequery.SerializeVolumeLabel(&label)
 	if err != nil {
 		return errwrap.Wrap(errCouldNotWriteVolumeLabel, err)
 	}
-
+	log.Debugln("Writing label")
 	if err := WriteAndSyncExistingFile(labelDevice, labelBytes, os.FileMode(0600)); err != nil {
 		return errwrap.Wrap(errCouldNotWriteVolumeLabel, err)
 	}
@@ -195,8 +161,11 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 			}
 		}()
 
-		// TODO: does this *ever* change across linux distros?
+		// TODO: does this *ever* change across linux distros? How do you detect if it does?
 		fsDevice = "/dev/mapper/" + mountDevice
+		log.Debugln("fsDevice updated to cryptvolume is", fsDevice)
+	} else {
+		log.Debugln("fsDevice is data volume", fsDevice)
 	}
 
 	log.Infoln("Creating filesystem on device:", fsDevice)

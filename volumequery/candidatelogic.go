@@ -5,6 +5,11 @@ package volumequery
 
 import (
 	"github.com/wrouesnel/go.log"
+	"errors"
+)
+
+var (
+	errNotInitialized = errors.New("specified disk is not initialized for simple")
 )
 
 // GetCandidateDisks returns all disks that simple might be able to use safely.
@@ -36,33 +41,35 @@ func GetCandidateDisks(selectionRules []DeviceSelectionRule) (initialized []stri
 	return
 }
 
-// CheckIfDiskIsInitialized takes a device path and determines if it is a
+// checkAndGetInitializedDisk takes a device path and determines if it is a
 // simple disk. It returns the outcome of the assessment, a reason code if the
 // assessment fails, and a failure code if the lookup fails.
-func CheckIfDiskIsInitialized(diskPath string) (bool, DiskFailReason, error) {
+// Returns the initialization state, failure reason if not initialized, label
+// volume path, device volume path, and lookup error state.
+func checkAndGetInitializedDisk(diskPath string) (bool, DiskFailReason, string, string, error) {
 	partDevices, err := GetPartitionDevicesFromDiskPath(diskPath)
 	if err != nil {
-		return false, errUnknown, err
+		return false, errUnknown, "", "", err
 	}
 
 	if len(partDevices) == 0 {
 		// Okay, no partitions. Does it have a filesystem?
 		device, err := GetFullSelectionRuleForDevice(diskPath)
 		if err != nil {
-			return false, errUnknown, err
+			return false, errUnknown, "", "", err
 		}
 
 		if _, found := device.Properties["ID_FS_USAGE"]; found {
 			// Has a filesystem. Don't touch it.
-			return false, errHasAFilesystem, nil
+			return false, errHasAFilesystem, "", "", nil
 		} else if _, found := device.Properties["ID_PART_TABLE_TYPE"]; found {
 			// Has a partition table. We wouldn't have create this, so don't
 			// touch it.
-			return false, errHasPartitionTable, nil
+			return false, errHasPartitionTable, "", "", nil
 		}
 
 		// No filesystems or partition tables - so just a blank disk.
-		return false, errBlankDisk, nil
+		return false, errBlankDisk, "", "", nil
 	}
 
 	// Has some partitions. Is one a label partition
@@ -72,7 +79,7 @@ func CheckIfDiskIsInitialized(diskPath string) (bool, DiskFailReason, error) {
 		if partDev.Properties["ID_PART_ENTRY_NAME"] == SimpleMetadataLabel &&
 			partDev.Properties["ID_PART_ENTRY_TYPE"] == SimpleMetadataUUID {
 			if labelDevice != "" {
-				return false, errFoundMultipleLabelPartitions, nil
+				return false, errFoundMultipleLabelPartitions, "", "", nil
 			}
 			labelDevice = partPath
 			log.Debugln("Found simple label partition:", labelDevice)
@@ -81,21 +88,44 @@ func CheckIfDiskIsInitialized(diskPath string) (bool, DiskFailReason, error) {
 				dataDevice = partPath
 				log.Debugln("Found simple data partition:", dataDevice)
 			} else {
-				return false, errFoundMultipleDataPartitions, nil
+				return false, errFoundMultipleDataPartitions, "", "", nil
 			}
 		}
 	}
 
 	if labelDevice == "" {
-		return false, errCouldNotFindLabelPartition, nil
+		return false, errCouldNotFindLabelPartition, "", "", nil
 	}
 
 	if dataDevice == "" {
-		return false, errCouldNotFindDataPartition, nil
+		return false, errCouldNotFindDataPartition, "", "", nil
 	}
 
 	// Disk is initialized and formatted properly.
-	return true, nil, nil
+	return true, nil, labelDevice, dataDevice, nil
+}
+
+// CheckIfDiskIsInitialized takes a device path and determines if it is a
+// simple disk. It returns the outcome of the assessment, a reason code if the
+// assessment fails, and a failure code if the lookup fails.
+func CheckIfDiskIsInitialized(diskPath string) (bool, DiskFailReason, error) {
+	isInitialized, failReason, _, _, err := checkAndGetInitializedDisk(diskPath)
+	return isInitialized, failReason, err
+}
+
+// GetDiskLabelAndVolumePath get's the disk label and volume path.
+func GetDiskLabelAndVolumePath(diskPath string) (string, string, error) {
+	isInitialized, failReason, labelPath, volumePath, err := checkAndGetInitializedDisk(diskPath)
+	if err != nil {
+		return "", "", err
+	}
+	if failReason != nil {
+		return "", "", error(failReason)
+	}
+	if !isInitialized {
+		return "", "", errNotInitialized
+	}
+	return labelPath, volumePath, nil
 }
 
 // IsBlankDisk converts an isInitialized/failReason pair into a check if the
