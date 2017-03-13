@@ -92,7 +92,7 @@ func main() {
 	checkVolumeQuery := app.Command("query-device", "run a given query string against a given device")
 	checkVolumeQueryCmdData := checkVolumeQueryCmd{}
 	checkVolumeQuery.Arg("block device","block device to partition and initialize").StringVar(&checkVolumeQueryCmdData.targetDevice)
-	volumequery.VolumeQueryVar(forceInitDisk.Arg("initializing query string", "query string used to initialize the device"), &checkVolumeQueryCmdData.inputQueryString)
+	volumequery.VolumeQueryVar(checkVolumeQuery.Arg("query string", "query string used to initialize the device"), &checkVolumeQueryCmdData.inputQueryString)
 
 	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
 	case rawQueryFromStdin.FullCommand():

@@ -172,6 +172,8 @@ func DeserializeVolumeLabel(path string) (VolumeLabel, error) {
 	if err != nil {
 		return VolumeLabel{}, err
 	}
+	// rawData includes the trailing null, which will choke the parser.
+	rawData = rawData[:len(rawData)-1]
 
 	volLabel := VolumeLabel{}
 

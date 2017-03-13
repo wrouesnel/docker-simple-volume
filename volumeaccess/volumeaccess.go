@@ -1,16 +1,18 @@
 package volumeaccess
 
 import (
-	"github.com/wrouesnel/go.sysutil/executil"
-	"github.com/hashicorp/errwrap"
 	"errors"
-	"github.com/satori/go.uuid"
+	"path/filepath"
 	"strings"
+
+	"github.com/hashicorp/errwrap"
+	"github.com/satori/go.uuid"
 	"github.com/wrouesnel/go.log"
+	"github.com/wrouesnel/go.sysutil/executil"
 )
 
 var (
-	errCryptSetupOpenFailed = errors.New("error invoking cryptsetup to open device")
+	errCryptSetupOpenFailed  = errors.New("error invoking cryptsetup to open device")
 	errCryptSetupCloseFailed = errors.New("error invoking cryptsetup to close device")
 )
 
@@ -45,7 +47,7 @@ func (this *deviceContext) Close() error {
 // encryptedDeviceContext represents the context of an opened LUKS volume.
 type encryptedDeviceContext struct {
 	sourceDevicePath string
-	mountId string
+	mountId          string
 }
 
 // OpenEncryptedDevice opens a given device as an encrypted device and returns
@@ -63,15 +65,23 @@ func OpenEncryptedDevice(key string, devicePath string) (VolumeContext, error) {
 	if err := executil.CheckExecWithInput(key, "cryptsetup", cryptOpenOpts...); err != nil {
 		return nil, errwrap.Wrap(errCryptSetupOpenFailed, err)
 	}
-	return VolumeContext(&encryptedDeviceContext{
+
+	newCtx := VolumeContext(&encryptedDeviceContext{
 		sourceDevicePath: devicePath,
-		mountId: mountDevice,
-	}), nil
+		mountId:          mountDevice,
+	})
+
+	return newCtx, nil
 }
 
 // GetDevicePath returns the unencrypted device path
 func (this *encryptedDeviceContext) GetDevicePath() string {
-	return "/dev/mapper/" + this.mountId
+	realPath, err := filepath.EvalSymlinks("/dev/mapper/" + this.mountId)
+	if err != nil {
+		return ""
+	}
+
+	return realPath
 }
 
 func (this *encryptedDeviceContext) Close() error {

@@ -8,9 +8,9 @@ import (
 
 	"github.com/hashicorp/errwrap"
 	"github.com/wrouesnel/go.sysutil/executil"
+	"github.com/wrouesnel/go.log"
 
 	"github.com/wrouesnel/docker-simple-disk/volumequery"
-	"github.com/wrouesnel/go.log"
 	"github.com/wrouesnel/docker-simple-disk/volumeaccess"
 )
 
@@ -44,7 +44,7 @@ func InitializeBlockDevice(blockDevice string, inputQuery volumequery.VolumeQuer
 		"-t",
 		fmt.Sprintf("%d:%s", partIdx, volumequery.SimpleMetadataUUID),
 		"-c",
-		fmt.Sprintf("%d:%s",partIdx, volumequery.SimpleMetadataLabel),
+		fmt.Sprintf("%d:%s", partIdx, volumequery.SimpleMetadataLabel),
 	}
 
 	// Parse the volume query into options which affect partitioning
