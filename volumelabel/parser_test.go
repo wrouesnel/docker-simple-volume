@@ -34,6 +34,40 @@ type S struct {
 	Test12 bool   `volumelabel:"test-bool"`
 }
 
+// Test struct with pointers of all datatypes
+type PtrS struct {
+	Test1  *int    `volumelabel:"ptrtest-int"`
+	Test2  *int8   `volumelabel:"ptrtest-int8"`
+	Test3  *int16  `volumelabel:"ptrtest-int16"`
+	Test4  *int32  `volumelabel:"ptrtest-int32"`
+	Test5  *int64  `volumelabel:"ptrtest-int64"`
+	Test6  *uint   `volumelabel:"ptrtest-uint"`
+	Test7  *uint8  `volumelabel:"ptrtest-uint8"`
+	Test8  *uint16 `volumelabel:"ptrtest-uint16"`
+	Test9  *uint32 `volumelabel:"ptrtest-uint32"`
+	Test10 *uint64 `volumelabel:"ptrtest-uint64"`
+	Test11 *string `volumelabel:"ptrtest-str"`
+	Test12 *bool   `volumelabel:"ptrtest-bool"`
+}
+
+// Make a test struct which points to actual values.
+func newInitializedPtrS() *PtrS {
+	return &PtrS{
+		Test1:  new(int),
+		Test2:  new(int8),
+		Test3:  new(int16),
+		Test4:  new(int32),
+		Test5:  new(int64),
+		Test6:  new(uint),
+		Test7:  new(uint8),
+		Test8:  new(uint16),
+		Test9:  new(uint32),
+		Test10: new(uint64),
+		Test11: new(string),
+		Test12: new(bool),
+	}
+}
+
 const SUnparseable string = "test-int.notInt_test-int8.notInt8_test-int16.notInt16_test-int32.notInt32_test-int64.notInt64_test-uint.notUint_test-uint8.notUint8_test-uint16.notUint16_test-uint32.notUint32_test-uint64.notUint64_test-str.Not$Parseable_test-bool.NotDistinctlyTrue"
 
 func (this *ParserSuite) TestRoundTripWithZeroValues(c *C) {
@@ -55,6 +89,58 @@ func (this *ParserSuite) TestRoundTripWithZeroValues(c *C) {
 
 	// Do structs match? (note: no DeepEquals because we only do "simple" structs)
 	c.Check(sout, Equals, sin)
+}
+
+func (this *ParserSuite) TestRoundTripWithNilPointerValues(c *C) {
+	// Do a nil roundtrip
+	var outbound string
+	var err error
+	var sout PtrS
+	var sin PtrS
+
+	sout = PtrS{}
+	outbound, err = MarshalVolumeLabel(sout)
+	c.Check(err, IsNil)
+
+	c.Logf("Nil'd Value: %s", outbound)
+
+	sin = PtrS{}
+	err = UnmarshalVolumeLabel(outbound, &sin)
+	c.Check(err, IsNil)
+
+	c.Check(sout, Equals, sin)
+}
+
+func (this *ParserSuite) TestRoundTripWithInitializedPointerValues(c *C) {
+	// Do a nil roundtrip
+	var outbound string
+	var err error
+	var sout PtrS
+	var sin PtrS
+
+	sout = *newInitializedPtrS()
+	outbound, err = MarshalVolumeLabel(sout)
+	c.Check(err, IsNil)
+
+	c.Logf("initialized Values: %s", outbound)
+
+	sin = PtrS{}
+	err = UnmarshalVolumeLabel(outbound, &sin)
+	c.Check(err, IsNil)
+
+	// Do structs match? (note: no DeepEquals because we only do "simple" structs)
+	c.Check(*sout.Test1, Equals, *sin.Test1)
+	c.Check(*sout.Test2, Equals, *sin.Test2)
+	c.Check(*sout.Test3, Equals, *sin.Test3)
+	c.Check(*sout.Test4, Equals, *sin.Test4)
+	c.Check(*sout.Test5, Equals, *sin.Test5)
+	c.Check(*sout.Test6, Equals, *sin.Test6)
+	c.Check(*sout.Test7, Equals, *sin.Test7)
+	c.Check(*sout.Test8, Equals, *sin.Test8)
+	c.Check(*sout.Test9, Equals, *sin.Test9)
+	c.Check(*sout.Test10, Equals, *sin.Test10)
+	c.Check(*sout.Test11, Equals, *sin.Test11)
+	c.Check(*sout.Test12, Equals, *sin.Test12)
 }
 
 func (this *ParserSuite) TestRoundTripWithMaxValues(c *C) {
@@ -218,11 +304,11 @@ func (this *ParserSuite) TestMarshalVolumeLabelFailsWithNoStruct(c *C) {
 
 func (this *ParserSuite) TestMarshalVolumeIgnoresUntaggedFields(c *C) {
 	type s struct {
-		Tagged string `volumelabel:"tagged"`
+		Tagged   string `volumelabel:"tagged"`
 		Untagged string
 	}
 
-	testcase := s{"this-is-the-tagged-field","this-is-the-untagged-field"}
+	testcase := s{"this-is-the-tagged-field", "this-is-the-untagged-field"}
 	expected := "tagged.this-is-the-tagged-field"
 
 	out, err := MarshalVolumeLabel(testcase)
@@ -297,7 +383,7 @@ func (this *ParserSuite) TestUnMarshalVolumeFailsOnBadKeyTag(c *C) {
 
 	testcase := s{}
 
-	err := UnmarshalVolumeLabel("tagged_but_should_fail.a-value-we-cant-get",&testcase)
+	err := UnmarshalVolumeLabel("tagged_but_should_fail.a-value-we-cant-get", &testcase)
 	c.Check(err, NotNil)
 }
 
@@ -308,6 +394,6 @@ func (this *ParserSuite) TestUnMarshalVolumeFailsOnUnaddressableValue(c *C) {
 func (this *ParserSuite) TestUnMarshalVolumeFailsOnBadValueWhileUnmarshalling(c *C) {
 	testcase := S{}
 
-	err := UnmarshalVolumeLabel(SUnparseable,&testcase)
+	err := UnmarshalVolumeLabel(SUnparseable, &testcase)
 	c.Check(err, NotNil)
 }

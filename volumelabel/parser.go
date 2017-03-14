@@ -62,6 +62,7 @@ func VolumeFieldValueValid(v string) bool {
 
 // Marshals a value to a volume-field compatible string
 func marshalType(v interface{}) (string, error) {
+
 	switch v.(type) {
 	case bool:
 		if v.(bool) {
@@ -83,7 +84,13 @@ func marshalType(v interface{}) (string, error) {
 	//		return s, nil
 	//	}
 	//	return "", fmt.Errorf("value does not parse field regex: %v", s)
+	case nil:
+		return "", nil
 	default:
+		// Check if type implements marshaller interface
+		if m, ok := v.(Marshaller); ok {
+			return m.VolumelabelMarshal()
+		}
 		return "", fmt.Errorf("value is not a marshallable type: %T", v)
 	}
 }
@@ -162,6 +169,8 @@ func unmarshalType(v string, t interface{}) error {
 			return fmt.Errorf("value does not parse field regex: %v", v)
 		}
 		*t.(*string) = v
+	case Unmarshaller:
+		return t.(Unmarshaller).VolumelabelUnmarshal(v)
 	}
 	return nil
 }
@@ -195,8 +204,18 @@ func MarshalVolumeLabel(v interface{}) (string, error) {
 			return "", fmt.Errorf("key name does not parse field regex: %v", keyName)
 		}
 
-		// Key name is valid. Get the value.
-		value, err := marshalType(vvalue.Field(i).Interface())
+		// Key name is valid. Is it a pointer?
+		var v interface{}
+		v = vvalue.Field(i).Interface()
+		if reflect.TypeOf(v).Kind() == reflect.Ptr {
+			// Is it nil? In which case remove it from marshalling entirely
+			if reflect.ValueOf(v).IsNil() {
+				continue
+			}
+			// Not nil, dereference it to it's concrete type
+			v = reflect.ValueOf(v).Elem().Interface()
+		}
+		value, err := marshalType(v)
 		if err != nil {
 			return "", err
 		}
@@ -253,8 +272,23 @@ func UnmarshalVolumeLabel(l string, v interface{}) error {
 			if !value.Elem().Field(i).CanAddr() {
 				return fmt.Errorf("key cannot be addressed and will never be unmarshalled: %v %v", keyName, value.Type().Elem().Field(i).PkgPath)
 			}
-			// Get a pointer to the field in the target struct
-			target := value.Elem().Field(i).Addr().Interface()
+
+			var target interface{}
+			if value.Elem().Field(i).Kind() == reflect.Ptr {
+				// Not a concrete type, make a type of the underlying type.
+				underlyingTyp := value.Elem().Field(i).Type().Elem()
+				// Make a pointer to it
+				ptrVal := reflect.New(underlyingTyp)
+				// Point the actual field to the new pointer.
+				value.Elem().Field(i).Set(ptrVal)
+				// Unmarshal target is the interface pointer
+				target = ptrVal.Interface()
+
+			} else {
+				// Is a concrete type, get pointer straight to value
+				target = value.Elem().Field(i).Addr().Interface()
+			}
+
 			// Unmarshal straight into it
 			err := unmarshalType(rawstr, target)
 			if err != nil {
@@ -266,109 +300,12 @@ func UnmarshalVolumeLabel(l string, v interface{}) error {
 	return nil
 }
 
-// Parses a docker volume name i.e "label.some_value" into an expanded
-// volume query structure.
-//func UnmarshalVolumeLabel(volumeName string, v interface{}) error {
-//
-//	q := volumequery.VolumeQuery{}
-//	// Get fields
-//	fields := strings.Split(volumeName, ParserFieldSep)
-//
-//	for _, field := range fields {
-//		// Split field into key value
-//		kv := strings.SplitN(field, ParserKVSep, 1)
-//
-//		key := kv[0]
-//		value := kv[1]
-//
-//		switch key {
-//		case "label":
-//			q.Label = value
-//		case "own-hostname":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.OwnHostname = b
-//			}
-//		case "own-machine-id":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.OwnMachineId = b
-//			}
-//		case "initialized":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.Initialized = b
-//			}
-//		case "basename":
-//			q.Basename = value
-//		case "naming-style":
-//			switch value {
-//			case volumequery.NamingNumeric, volumequery.NamingUUID:
-//				q.NamingStyle = volumequery.NamingType(value)
-//			default:
-//				return volumequery.VolumeQuery{}, errors.New("Not a valid naming style")
-//			}
-//		case "exclusive":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.Exclusive = b
-//			}
-//		case "min-size":
-//			if bytes, err := humanize.ParseBytes(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.MinimumSizeBytes = bytes
-//			}
-//		case "max-size":
-//			if bytes, err := humanize.ParseBytes(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.MaximumSizeBytes = bytes
-//			}
-//		case "min-disks":
-//			if numDisks, err := strconv.ParseInt(value, 10, 32); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.MinDisks = int32(numDisks)
-//			}
-//		case "max-disks":
-//			if numDisks, err := strconv.ParseInt(value, 10, 32); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.MaxDisks = int32(numDisks)
-//			}
-//		case "dynamic-mounts":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.DynamicMounts = b
-//			}
-//		case "persist-numbering":
-//			if b, err := strconv.ParseBool(value); err != nil {
-//				return volumequery.VolumeQuery{}, err
-//			} else {
-//				q.PersistNumbering = b
-//			}
-//		case "filesystem":
-//			q.Filesystem = value
-//		default:
-//			if strings.HasPrefix(key, "meta-") {
-//				metaKey := strings.TrimPrefix(key, "meta-")
-//				q.Metadata[metaKey] = value
-//			} else {
-//				return volumequery.VolumeQuery{}, errors.New(fmt.Sprintf("Unknown query parameter found: %s", value))
-//			}
-//		}
-//	}
-//
-//	// Label is required.
-//	if q.Label == "" {
-//		return volumequery.VolumeQuery{}, errors.New("label is a required field.")
-//	}
-//
-//	return q, nil
-//}
+// Types which want to do custom marshalling should implement this interface
+type Marshaller interface {
+	VolumelabelMarshal() (string, error)
+}
+
+// Types which want to do custom unmarshalling should implement this interface
+type Unmarshaller interface {
+	VolumelabelUnmarshal(string) error
+}
