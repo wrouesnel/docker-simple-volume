@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -74,6 +75,13 @@ func marshalType(v interface{}) (string, error) {
 		return fmt.Sprintf("%v", v), nil
 	case string:
 		s := v.(string)
+		if VolumeFieldValueValid(s) {
+			return s, nil
+		}
+		return "", fmt.Errorf("value does not parse field regex: %v", s)
+	case time.Time:
+		s := v.(time.Time).Format("2006-01-02T15-04-05.000000000")
+		s = strings.Replace(s, ".","N", -1)
 		if VolumeFieldValueValid(s) {
 			return s, nil
 		}
@@ -169,6 +177,13 @@ func unmarshalType(v string, t interface{}) error {
 			return fmt.Errorf("value does not parse field regex: %v", v)
 		}
 		*t.(*string) = v
+	case *time.Time:
+		s := strings.Replace(v, "N", ".", -1)
+		r, err := time.Parse("2006-01-02T15-04-05.000000000", s)
+		if err != nil {
+			return fmt.Errorf("could not unmarshal: %v %v", v, err.Error())
+		}
+		*t.(*time.Time) = r
 	case Unmarshaller:
 		return t.(Unmarshaller).VolumelabelUnmarshal(v)
 	}

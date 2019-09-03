@@ -5,6 +5,7 @@ import (
 	"math"
 	"regexp"
 	"testing"
+	"time"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -32,6 +33,7 @@ type S struct {
 	Test10 uint64 `volumelabel:"test-uint64"`
 	Test11 string `volumelabel:"test-str"`
 	Test12 bool   `volumelabel:"test-bool"`
+	Test13 time.Time `volumelabel:"test-time"`
 }
 
 // Test struct with pointers of all datatypes
@@ -48,6 +50,7 @@ type PtrS struct {
 	Test10 *uint64 `volumelabel:"ptrtest-uint64"`
 	Test11 *string `volumelabel:"ptrtest-str"`
 	Test12 *bool   `volumelabel:"ptrtest-bool"`
+	Test13 *time.Time `volumelabel:"ptrtest-time"`
 }
 
 // Make a test struct which points to actual values.
@@ -65,10 +68,11 @@ func newInitializedPtrS() *PtrS {
 		Test10: new(uint64),
 		Test11: new(string),
 		Test12: new(bool),
+		Test13: new(time.Time),
 	}
 }
 
-const SUnparseable string = "test-int.notInt_test-int8.notInt8_test-int16.notInt16_test-int32.notInt32_test-int64.notInt64_test-uint.notUint_test-uint8.notUint8_test-uint16.notUint16_test-uint32.notUint32_test-uint64.notUint64_test-str.Not$Parseable_test-bool.NotDistinctlyTrue"
+const SUnparseable string = "test-int.notInt_test-int8.notInt8_test-int16.notInt16_test-int32.notInt32_test-int64.notInt64_test-uint.notUint_test-uint8.notUint8_test-uint16.notUint16_test-uint32.notUint32_test-uint64.notUint64_test-str.Not$Parseable_test-bool.NotDistinctlyTrue_test-time.NotATime"
 
 func (this *ParserSuite) TestRoundTripWithZeroValues(c *C) {
 	// Do a 0 roundtrip
@@ -141,6 +145,7 @@ func (this *ParserSuite) TestRoundTripWithInitializedPointerValues(c *C) {
 	c.Check(*sout.Test10, Equals, *sin.Test10)
 	c.Check(*sout.Test11, Equals, *sin.Test11)
 	c.Check(*sout.Test12, Equals, *sin.Test12)
+	c.Check(*sout.Test13, Equals, *sin.Test13)
 }
 
 func (this *ParserSuite) TestRoundTripWithMaxValues(c *C) {
@@ -159,6 +164,8 @@ func (this *ParserSuite) TestRoundTripWithMaxValues(c *C) {
 
 		Test11: "abcdefghijklmonpqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ---------",
 		Test12: true,
+		// Note: golang doesn't support parsing years higher then 9999.
+		Test13: func() time.Time { t, _ := time.Parse("2006-01-02T15-04-05.999999999", "9999-12-12T23-59-59.999999999") ; return t }(),
 	}
 
 	outbound, err := MarshalVolumeLabel(sout)
@@ -189,6 +196,7 @@ func (this *ParserSuite) TestRoundTripWithMinValues(c *C) {
 		Test10: 0,
 		Test11: "",
 		Test12: false,
+		Test13: time.Time{},
 	}
 
 	outbound, err := MarshalVolumeLabel(sout)
@@ -290,6 +298,9 @@ func (this *ParserSuite) TestUnmarshalTypeWithBadType(c *C) {
 	c.Check(err, NotNil)
 
 	err = unmarshalType("this_is_not_allowed", new(string))
+	c.Check(err, NotNil)
+
+	err = unmarshalType("this_is_not_allowed", new(time.Time))
 	c.Check(err, NotNil)
 }
 
